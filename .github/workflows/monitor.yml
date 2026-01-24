@@ -3,7 +3,7 @@ name: 东横Inn 批量监控
 on:
   schedule:
     - cron: '*/30 * * * *'  # 每30分钟运行一次
-  workflow_dispatch:        # 支持手动运行
+  workflow_dispatch:        # 支持手动点击按钮运行
 
 jobs:
   check_rooms:
@@ -31,10 +31,11 @@ jobs:
           import os
           import resend
           import time
+          from urllib.parse import urlparse, parse_qs
 
           # 1. 配置 Resend
-          resend.api_key = os.environ['RESEND_API_KEY']
-          user_email = os.environ['USER_EMAIL']
+          resend.api_key = os.environ.get('RESEND_API_KEY')
+          user_email = os.environ.get('USER_EMAIL')
 
           # 2. 读取 urls.txt
           try:
@@ -45,6 +46,7 @@ jobs:
               exit(1)
 
           print(f'📋 计划监控 {len(urls)} 个任务...\n')
+          print('='*50)
 
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -54,48 +56,86 @@ jobs:
 
           # 3. 循环检查
           for i, url in enumerate(urls):
-              print(f'[{i+1}/{len(urls)}] 正在检查...')
+              # --- 解析 URL 参数 (让日志更好看) ---
+              try:
+                  parsed = urlparse(url)
+                  params = parse_qs(parsed.query)
+                  hotel_id = params.get('hotel', ['未知编号'])[0]
+                  checkin_date = params.get('start', ['未知日期'])[0]
+              except:
+                  hotel_id = '未知'
+                  checkin_date = '未知'
+
+              print(f'[{i+1}/{len(urls)}] 🏨 酒店:{hotel_id} | 📅 日期:{checkin_date}')
+              
               try:
                   resp = requests.get(url, headers=headers, timeout=30)
                   if resp.status_code != 200:
-                      print(f'   ❌ 访问失败: {resp.status_code}')
+                      print(f'      ❌ 访问失败: {resp.status_code}')
                       continue
 
                   soup = BeautifulSoup(resp.text, 'html.parser')
                   
-                  # 核心判断逻辑
+                  # 尝试获取网页里的酒店具体名称 (作为补充)
+                  page_title = soup.title.string.strip() if soup.title else ''
+                  # 简单的清洗逻辑，去掉通用的后缀
+                  hotel_name = page_title.replace(' - 东横INN', '').replace('｜酒店·商务酒店预订', '')
+                  if not hotel_name: hotel_name = f'店号 {hotel_id}'
+
+                  # 核心判断逻辑 (查找预订按钮)
                   has_room = False
-                  if soup.find_all(lambda tag: tag.name == 'a' and tag.get('href') and '/reserve/input' in tag.get('href')):
+                  # 查找所有 href 包含 /reserve/input 的链接
+                  booking_links = soup.find_all(lambda tag: tag.name == 'a' and tag.get('href') and '/reserve/input' in tag.get('href'))
+                  
+                  if booking_links:
                       has_room = True
                   
                   if has_room:
-                      print('   🎉 发现空房！')
-                      found_list.append(url)
+                      print(f'      🎉 发现空房! ({hotel_name})')
+                      found_list.append({
+                          'name': hotel_name,
+                          'date': checkin_date,
+                          'url': url,
+                          'count': len(booking_links)
+                      })
                   else:
-                      print('   😴 暂无空房')
+                      print('      😴 暂无空房')
                   
                   # 礼貌延时，防止请求太快被封 IP
                   time.sleep(2)
 
               except Exception as e:
-                  print(f'   ❌ 脚本出错: {e}')
+                  print(f'      ❌ 脚本出错: {e}')
+              
+              print('-'*50)
 
-          # 4. 如果有发现，发送汇总邮件
+          # 4. 发送通知 (邮件内容优化)
           if found_list:
               print('\n📧 正在发送通知邮件...')
-              email_body = '<h3>🎉 以下行程发现空房：</h3><ul>'
-              for link in found_list:
-                  email_body += f'<li><a href=\'{link}\'>点击预订</a> (链接: {link})</li>'
-              email_body += '</ul>'
-
+              
+              # 构建清晰的邮件 HTML
+              email_body = '<h3>🎉 以下行程发现空房，请速抢：</h3><hr>'
+              for item in found_list:
+                  email_body += f'''
+                  <div style='margin-bottom: 15px; padding: 10px; border: 1px solid #ddd; border-radius: 5px;'>
+                      <p><strong>🏨 酒店:</strong> {item['name']}</p>
+                      <p><strong>📅 日期:</strong> {item['date']}</p>
+                      <p><strong>🔢 房型数:</strong> {item['count']} 个选项</p>
+                      <p><a href='{item['url']}' style='background-color: #28a745; color: white; padding: 5px 10px; text-decoration: none; border-radius: 3px;'>👉 点击直接预订</a></p>
+                  </div>
+                  '''
+              
               try:
-                  r = resend.Emails.send({
-                    'from': 'onboarding@resend.dev',
-                    'to': user_email,
-                    'subject': f'【有房提醒】发现了 {len(found_list)} 个空房！',
-                    'html': email_body
-                  })
-                  print('✅ 邮件发送成功！ID:', r)
+                  if resend.api_key:
+                      r = resend.Emails.send({
+                        'from': 'onboarding@resend.dev',
+                        'to': user_email,
+                        'subject': f'【有房提醒】{found_list[0]["date"]} - {found_list[0]["name"]} 等',
+                        'html': email_body
+                      })
+                      print('✅ 邮件发送成功！ID:', r)
+                  else:
+                      print('⚠️ 未配置 RESEND_API_KEY，跳过发送邮件')
               except Exception as e:
                   print('❌ 邮件发送失败:', e)
           else:
