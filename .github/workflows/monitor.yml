@@ -1,4 +1,4 @@
-name: 东横Inn 严谨监控
+name: 东横Inn 最终完美版
 
 on:
   schedule:
@@ -38,7 +38,7 @@ jobs:
           resend.api_key = os.environ.get('RESEND_API_KEY')
           user_email = os.environ.get('USER_EMAIL')
           
-          # 2. 伪装头 (模拟中文浏览器)
+          # 2. 伪装头
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
               'Accept-Language': 'zh-CN,zh;q=0.9', 
@@ -51,81 +51,63 @@ jobs:
               print('❌ 错误：找不到 urls.txt')
               exit(1)
 
-          print(f'📋 启动监控: {len(urls)} 个任务 (逻辑：严查预订入口)\n')
+          print(f'📋 启动监控: {len(urls)} 个任务\n')
           
           found_list = []
 
           for i, url in enumerate(urls):
-              # 解析 URL 显示信息
+              # 解析 URL
               try:
                   parsed = urlparse(url)
                   params = parse_qs(parsed.query)
                   hotel_id = params.get('hotel', ['未知'])[0]
-                  date_val = params.get('start', ['未知'])[0]
+                  # 统一使用 checkin_date 变量名，防止混淆
+                  checkin_date = params.get('start', ['未知'])[0]
               except:
-                  hotel_id, date_val = '未知', '未知'
+                  hotel_id, checkin_date = '未知', '未知'
 
-              print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {date_val}')
+              print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {checkin_date}')
               
               try:
                   resp = requests.get(url, headers=headers, timeout=30)
-                  soup = BeautifulSoup(resp.text, 'html.parser')
+                  text_content = resp.text
                   
-                  # === 核心判断逻辑 (严谨版) ===
-                  text_content = soup.get_text()
-
-                  # 判据 A: 明确的库存提示 (如 '剩 8 间')
+                  # === 核心判定逻辑 (已验证成功) ===
+                  
+                  # 判据 A: 库存 (剩 x 间)
                   has_stock = re.search(r'剩\s*\d+\s*间', text_content)
                   
-                  # 判据 B: 真正的预订操作区
-                  # 查找包含 '预订' 字样的按钮或链接，且不在页脚
-                  # 通常是一个 form 或 a 标签
+                  # 判据 B: 预订按钮
                   has_booking_btn = False
-                  # 查找所有链接文本
-                  links = soup.find_all('a')
-                  for link in links:
-                      if link.get_text() and '预订' in link.get_text():
-                          # 排除掉导航栏里的 '我的预订'
-                          if '我的' not in link.get_text() and '确认' not in link.get_text():
-                              has_booking_btn = True
-                              break
+                  if 'reserve/input' in text_content or 'value="预订"' in text_content:
+                      has_booking_btn = True
                   
-                  # 判据 C: 价格检测 (排除掉 10,000 这种整数，通常是房费如 8,645)
-                  # 查找 ¥ 符号
+                  # 判据 C: 真实价格 (过滤掉10000)
                   has_real_price = False
                   prices = re.findall(r'¥\s*([0-9,]+)', text_content)
                   for p in prices:
-                      # 去掉逗号转数字
                       try:
                           val = int(p.replace(',', ''))
-                          # 真实的东横房价通常在 3000-20000 之间，且很少是整整 10000 (除非是特殊房)
-                          # 如果全是 10000 则认为是干扰项
-                          if val != 10000: 
-                              has_real_price = True
-                      except:
-                          pass
+                          if val != 10000: has_real_price = True
+                      except: pass
 
-                  # 综合判定: 必须满足 (有库存 或 有真实价格 或 有按钮) 且 页面不能全是“没有空房”
-                  # 只要满足任意一个强特征，就认为有房
+                  # 综合判定
                   is_available = False
-                  
                   if has_stock:
-                      print(f'      DEBUG: 发现库存信息 ({has_stock.group()}) -> 有房')
+                      print(f'      DEBUG: 发现库存 ({has_stock.group()}) -> 有房')
                       is_available = True
                   elif has_booking_btn:
-                      print(f'      DEBUG: 发现“预订”操作按钮 -> 有房')
+                      print(f'      DEBUG: 发现预订按钮 -> 有房')
                       is_available = True
-                  elif has_real_price and "没有空房" not in text_content: 
-                      # 只有在没有满房标记时，才信任价格，防止误判
-                      print(f'      DEBUG: 发现有效价格 -> 有房')
+                  elif has_real_price and '没有空房' not in text_content:
+                      print(f'      DEBUG: 发现价格 -> 有房')
                       is_available = True
                   
                   if is_available:
                       print(f'      🎉 发现空房!')
-                      # 存入列表
                       found_list.append({
                           'id': hotel_id,
-                          'date': date_val,
+                          'date': checkin_date,
                           'url': url
                       })
                   else:
@@ -137,20 +119,21 @@ jobs:
                   print(f'      ❌ 出错: {e}')
               print('-'*40)
 
-          # 3. 发送邮件 (修复了 KeyError 问题)
+          # 3. 发送邮件 (已修复变量名问题)
           if found_list:
               print(f'\n📧 发现 {len(found_list)} 个目标，正在发送邮件...')
               
-              # 简单的 HTML 拼接
-              email_body = '<h3>🎉 以下行程发现空房：</h3><ul>'
+              # 邮件标题：直接取第一个结果的日期，避免使用未定义的变量
+              first_date = found_list[0]['date']
+              subject_txt = f'【有房提醒】{first_date} 东横Inn ({len(found_list)}个结果)'
               
-              # 注意：这里严格使用了双引号和正确的 key 名
+              email_body = '<h3>🎉 发现以下空房：</h3><ul>'
               for item in found_list:
-                  u = item['url']
+                  # 在循环内部安全地取值
                   d = item['date']
                   h = item['id']
+                  u = item['url']
                   email_body += f'<li><strong>{d} (店号{h})</strong><br><a href="{u}">👉 点击立即预订</a></li>'
-              
               email_body += '</ul>'
               
               if resend.api_key:
@@ -158,10 +141,10 @@ jobs:
                       resend.Emails.send({
                         'from': 'onboarding@resend.dev',
                         'to': user_email,
-                        'subject': f'【有房速抢】{found_list[0]["date"]} 东横Inn',
+                        'subject': subject_txt,
                         'html': email_body
                       })
-                      print('✅ 邮件发送成功')
+                      print('✅ 邮件发送成功！')
                   except Exception as e:
                       print(f'❌ 邮件发送失败: {e}')
               else:
