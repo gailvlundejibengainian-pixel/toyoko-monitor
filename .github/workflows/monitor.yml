@@ -1,0 +1,64 @@
+name: 东横Inn 监控 (02-21)
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # 每30分钟自动运行一次 (频率可调)
+  workflow_dispatch:        # 允许手动点击按钮测试
+
+jobs:
+  check_room:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: 安装依赖库
+        run: pip install requests beautifulsoup4
+
+      - name: 运行监控脚本
+        # 下面这段是内嵌的 Python 代码
+        run: |
+          python -c "
+          import requests
+          from bs4 import BeautifulSoup
+          import sys
+          import time
+
+          # 目标: 2026-02-21, 00104店, 2人
+          URL = 'https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00104&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22'
+          
+          print(f'正在检查: {URL}')
+          
+          headers = {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          }
+
+          try:
+              response = requests.get(URL, headers=headers, timeout=30)
+              print(f'状态码: {response.status_code}')
+              
+              if response.status_code != 200:
+                  print('❌ 访问失败，可能被拦截')
+                  sys.exit(1)
+
+              soup = BeautifulSoup(response.text, 'html.parser')
+              
+              # 核心逻辑: 查找是否有预订链接
+              # 东横官网有房时，会有 href 包含 /reserve/input 的链接
+              booking_links = soup.find_all(lambda tag: tag.name == 'a' and tag.get('href') and '/reserve/input' in tag.get('href'))
+              
+              if booking_links:
+                  print('\n' + '='*30)
+                  print('🎉 发现空房！(Found Room)')
+                  print(f'找到 {len(booking_links)} 个可预订房型')
+                  print('='*30 + '\n')
+                  # 这里可以让 GitHub Action 标记为成功，或者触发后续通知
+              else:
+                  print('😴 暂时无房 (No rooms available)')
+                  
+          except Exception as e:
+              print(f'❌ 脚本出错: {e}')
+              sys.exit(1)
+          "
