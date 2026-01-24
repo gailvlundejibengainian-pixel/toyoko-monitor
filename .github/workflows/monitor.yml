@@ -1,9 +1,9 @@
-name: 东横Inn 房价监控
+name: 东横Inn 严谨监控
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # 每30分钟运行
-  workflow_dispatch:        # 支持手动点按钮运行
+    - cron: '*/30 * * * *'  # 30分钟一次
+  workflow_dispatch:
 
 jobs:
   check_rooms:
@@ -51,7 +51,7 @@ jobs:
               print('❌ 错误：找不到 urls.txt')
               exit(1)
 
-          print(f'📋 启动监控: {len(urls)} 个任务 (逻辑：找“钱”和“库存”)\n')
+          print(f'📋 启动监控: {len(urls)} 个任务 (逻辑：严查预订入口)\n')
           
           found_list = []
 
@@ -61,46 +61,75 @@ jobs:
                   parsed = urlparse(url)
                   params = parse_qs(parsed.query)
                   hotel_id = params.get('hotel', ['未知'])[0]
-                  date = params.get('start', ['未知'])[0]
+                  date_val = params.get('start', ['未知'])[0]
               except:
-                  hotel_id, date = '未知', '未知'
+                  hotel_id, date_val = '未知', '未知'
 
-              print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {date}')
+              print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {date_val}')
               
               try:
-                  # 请求网页
                   resp = requests.get(url, headers=headers, timeout=30)
-                  
-                  # === 核心判断逻辑 (基于您提供的 MD 文件特征) ===
-                  # 1. 只要是有房，一定会显示具体价格，格式为 '¥' 后跟数字 (如 ¥8,645)
-                  #    注意：无房页面虽然有 '价格' 二字，但不会有 '¥数字' 这种组合
-                  has_money = re.search(r'¥\s*[0-9,]{3,}', resp.text)
-                  
-                  # 2. 只要是有房，通常会显示 '剩 X 间' 或者 '预订'
-                  #    MD文件显示：'剩 8 间房' 或 '预订'
-                  has_stock = re.search(r'剩\s*\d+\s*间', resp.text)
-                  
-                  # 3. 排除干扰：确保不是 '没有空房'
-                  #    虽然有房页面也可能包含其他房型的'没有空房'，但有房页面一定会有正向指标
-                  
-                  # 调试信息：打印网页标题确保没跑偏
                   soup = BeautifulSoup(resp.text, 'html.parser')
-                  title = soup.title.string.strip() if soup.title else '无标题'
+                  
+                  # === 核心判断逻辑 (严谨版) ===
+                  text_content = soup.get_text()
 
+                  # 判据 A: 明确的库存提示 (如 '剩 8 间')
+                  has_stock = re.search(r'剩\s*\d+\s*间', text_content)
+                  
+                  # 判据 B: 真正的预订操作区
+                  # 查找包含 '预订' 字样的按钮或链接，且不在页脚
+                  # 通常是一个 form 或 a 标签
+                  has_booking_btn = False
+                  # 查找所有链接文本
+                  links = soup.find_all('a')
+                  for link in links:
+                      if link.get_text() and '预订' in link.get_text():
+                          # 排除掉导航栏里的 '我的预订'
+                          if '我的' not in link.get_text() and '确认' not in link.get_text():
+                              has_booking_btn = True
+                              break
+                  
+                  # 判据 C: 价格检测 (排除掉 10,000 这种整数，通常是房费如 8,645)
+                  # 查找 ¥ 符号
+                  has_real_price = False
+                  prices = re.findall(r'¥\s*([0-9,]+)', text_content)
+                  for p in prices:
+                      # 去掉逗号转数字
+                      try:
+                          val = int(p.replace(',', ''))
+                          # 真实的东横房价通常在 3000-20000 之间，且很少是整整 10000 (除非是特殊房)
+                          # 如果全是 10000 则认为是干扰项
+                          if val != 10000: 
+                              has_real_price = True
+                      except:
+                          pass
+
+                  # 综合判定: 必须满足 (有库存 或 有真实价格 或 有按钮) 且 页面不能全是“没有空房”
+                  # 只要满足任意一个强特征，就认为有房
                   is_available = False
                   
-                  if has_money:
-                      print(f'      DEBUG: 找到了价格 (如 {has_money.group()}) -> 判定有房')
+                  if has_stock:
+                      print(f'      DEBUG: 发现库存信息 ({has_stock.group()}) -> 有房')
                       is_available = True
-                  elif has_stock:
-                      print(f'      DEBUG: 找到了库存信息 ({has_stock.group()}) -> 判定有房')
+                  elif has_booking_btn:
+                      print(f'      DEBUG: 发现“预订”操作按钮 -> 有房')
+                      is_available = True
+                  elif has_real_price and "没有空房" not in text_content: 
+                      # 只有在没有满房标记时，才信任价格，防止误判
+                      print(f'      DEBUG: 发现有效价格 -> 有房')
                       is_available = True
                   
                   if is_available:
                       print(f'      🎉 发现空房!')
-                      found_list.append({'id': hotel_id, 'date': date, 'url': url, 'title': title})
+                      # 存入列表
+                      found_list.append({
+                          'id': hotel_id,
+                          'date': date_val,
+                          'url': url
+                      })
                   else:
-                      print(f'      😴 暂无空房 (标题: {title})')
+                      print(f'      😴 暂无空房')
 
                   time.sleep(2)
 
@@ -108,12 +137,20 @@ jobs:
                   print(f'      ❌ 出错: {e}')
               print('-'*40)
 
-          # 3. 发送邮件
+          # 3. 发送邮件 (修复了 KeyError 问题)
           if found_list:
               print(f'\n📧 发现 {len(found_list)} 个目标，正在发送邮件...')
-              email_body = '<h3>🎉哪怕只有一间房，只要显示价格就通知你：</h3><ul>'
+              
+              # 简单的 HTML 拼接
+              email_body = '<h3>🎉 以下行程发现空房：</h3><ul>'
+              
+              # 注意：这里严格使用了双引号和正确的 key 名
               for item in found_list:
-                  email_body += f'<li><strong>{item["date"]} (店号{item["id"]})</strong><br><a href="{item["url"]}">👉 点击立即预订</a><br><small>{item["title"]}</small></li>'
+                  u = item['url']
+                  d = item['date']
+                  h = item['id']
+                  email_body += f'<li><strong>{d} (店号{h})</strong><br><a href="{u}">👉 点击立即预订</a></li>'
+              
               email_body += '</ul>'
               
               if resend.api_key:
