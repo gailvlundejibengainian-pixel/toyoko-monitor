@@ -1,64 +1,103 @@
-name: 东横Inn 监控 (02-21)
+name: 东横Inn 批量监控
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # 每30分钟自动运行一次 (频率可调)
-  workflow_dispatch:        # 允许手动点击按钮测试
+    - cron: '*/30 * * * *'  # 每30分钟运行一次
+  workflow_dispatch:        # 支持手动运行
 
 jobs:
-  check_room:
+  check_rooms:
     runs-on: ubuntu-latest
     steps:
-      - name: 设置 Python 环境
+      - name: 拉取代码 (获取 urls.txt)
+        uses: actions/checkout@v3
+
+      - name: 设置 Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
-      - name: 安装依赖库
-        run: pip install requests beautifulsoup4
+      - name: 安装依赖
+        run: pip install requests beautifulsoup4 resend
 
-      - name: 运行监控脚本
-        # 下面这段是内嵌的 Python 代码
+      - name: 批量运行监控
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          USER_EMAIL: ${{ secrets.USER_EMAIL }}
         run: |
           python -c "
           import requests
           from bs4 import BeautifulSoup
-          import sys
+          import os
+          import resend
           import time
 
-          # 目标: 2026-02-21, 00104店, 2人
-          URL = 'https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00104&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22'
-          
-          print(f'正在检查: {URL}')
-          
+          # 1. 配置 Resend
+          resend.api_key = os.environ['RESEND_API_KEY']
+          user_email = os.environ['USER_EMAIL']
+
+          # 2. 读取 urls.txt
+          try:
+              with open('urls.txt', 'r') as f:
+                  urls = [line.strip() for line in f if line.strip()]
+          except FileNotFoundError:
+              print('❌ 错误：找不到 urls.txt 文件')
+              exit(1)
+
+          print(f'📋 计划监控 {len(urls)} 个任务...\n')
+
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           }
 
-          try:
-              response = requests.get(URL, headers=headers, timeout=30)
-              print(f'状态码: {response.status_code}')
-              
-              if response.status_code != 200:
-                  print('❌ 访问失败，可能被拦截')
-                  sys.exit(1)
+          found_list = []
 
-              soup = BeautifulSoup(response.text, 'html.parser')
-              
-              # 核心逻辑: 查找是否有预订链接
-              # 东横官网有房时，会有 href 包含 /reserve/input 的链接
-              booking_links = soup.find_all(lambda tag: tag.name == 'a' and tag.get('href') and '/reserve/input' in tag.get('href'))
-              
-              if booking_links:
-                  print('\n' + '='*30)
-                  print('🎉 发现空房！(Found Room)')
-                  print(f'找到 {len(booking_links)} 个可预订房型')
-                  print('='*30 + '\n')
-                  # 这里可以让 GitHub Action 标记为成功，或者触发后续通知
-              else:
-                  print('😴 暂时无房 (No rooms available)')
+          # 3. 循环检查
+          for i, url in enumerate(urls):
+              print(f'[{i+1}/{len(urls)}] 正在检查...')
+              try:
+                  resp = requests.get(url, headers=headers, timeout=30)
+                  if resp.status_code != 200:
+                      print(f'   ❌ 访问失败: {resp.status_code}')
+                      continue
+
+                  soup = BeautifulSoup(resp.text, 'html.parser')
                   
-          except Exception as e:
-              print(f'❌ 脚本出错: {e}')
-              sys.exit(1)
+                  # 核心判断逻辑
+                  has_room = False
+                  if soup.find_all(lambda tag: tag.name == 'a' and tag.get('href') and '/reserve/input' in tag.get('href')):
+                      has_room = True
+                  
+                  if has_room:
+                      print('   🎉 发现空房！')
+                      found_list.append(url)
+                  else:
+                      print('   😴 暂无空房')
+                  
+                  # 礼貌延时，防止请求太快被封 IP
+                  time.sleep(2)
+
+              except Exception as e:
+                  print(f'   ❌ 脚本出错: {e}')
+
+          # 4. 如果有发现，发送汇总邮件
+          if found_list:
+              print('\n📧 正在发送通知邮件...')
+              email_body = '<h3>🎉 以下行程发现空房：</h3><ul>'
+              for link in found_list:
+                  email_body += f'<li><a href=\'{link}\'>点击预订</a> (链接: {link})</li>'
+              email_body += '</ul>'
+
+              try:
+                  r = resend.Emails.send({
+                    'from': 'onboarding@resend.dev',
+                    'to': user_email,
+                    'subject': f'【有房提醒】发现了 {len(found_list)} 个空房！',
+                    'html': email_body
+                  })
+                  print('✅ 邮件发送成功！ID:', r)
+              except Exception as e:
+                  print('❌ 邮件发送失败:', e)
+          else:
+              print('\n🏁 本次运行结束，未发现空房。')
           "
