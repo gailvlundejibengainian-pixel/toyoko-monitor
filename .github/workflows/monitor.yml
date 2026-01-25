@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (修复版+价格侦探)
+name: 东横Inn 监控 (手术刀去噪版)
 
 on:
   schedule:
@@ -54,7 +54,7 @@ jobs:
               print('❌ 错误：找不到 urls.txt')
               exit(1)
 
-          print(f'📋 启动监控: {len(urls)} 个任务 (逻辑: 5000~Max, 修复报错)\n')
+          print(f'📋 启动监控: {len(urls)} 个任务 (逻辑: 去除页眉页脚噪音 + 修复邮件报错)\n')
           
           found_list = []
 
@@ -66,18 +66,14 @@ jobs:
                   hotel_id = params.get('hotel', ['未知'])[0]
                   checkin_date = params.get('start', ['未知'])[0]
                   
-                  # === 获取 Max 价格 ===
                   max_limit = 999999
                   if 'max' in params:
-                      try:
-                          max_limit = int(params['max'][0])
+                      try: max_limit = int(params['max'][0])
                       except: pass
                   
-                  # === 获取 Min 价格 (默认5000) ===
                   min_limit = 5000 
                   if 'min' in params:
-                      try:
-                          min_limit = int(params['min'][0])
+                      try: min_limit = int(params['min'][0])
                       except: pass
                       
               except:
@@ -90,40 +86,55 @@ jobs:
               
               try:
                   resp = requests.get(url, headers=headers, timeout=30)
-                  text_content = resp.text
                   
-                  # === 1. 提取并清洗价格 ===
-                  valid_prices = []
-                  raw_matches = re.findall(r'¥\s*([0-9,]+)', text_content)
+                  # === 🔥 关键手术：去除页眉页脚噪音 🔥 ===
+                  soup = BeautifulSoup(resp.text, 'html.parser')
                   
-                  # DEBUG: 打印它到底抓到了什么
-                  debug_prices = [] 
+                  # 1. 移除 script, style (防干扰)
+                  for script in soup(['script', 'style', 'noscript', 'iframe']):
+                      script.decompose()
+                      
+                  # 2. 移除 Header 和 Footer (7600 和 8000 通常在这里)
+                  # 这一步会删掉网页顶部导航和底部版权区
+                  for trash in soup(['header', 'footer', 'nav']):
+                      trash.decompose()
 
+                  # 3. 针对性移除常见的底部链接区 (通常包含很多无关数字)
+                  # 尝试移除 class 包含 footer 或 header 的 div
+                  for div in soup.find_all('div', class_=re.compile(r'footer|header|banner|advert')):
+                      div.decompose()
+
+                  # 只获取清洗后的纯文本
+                  clean_text = soup.get_text()
+                  
+                  # === 价格提取 ===
+                  valid_prices = []
+                  # 正则匹配
+                  raw_matches = re.findall(r'¥\s*([0-9,]+)', clean_text)
+                  
+                  debug_prices = []
                   for p in raw_matches:
                       try:
                           val = int(p.replace(',', ''))
                           debug_prices.append(val)
-                          
-                          # 过滤逻辑: 排除 10000 (干扰项) 和 低于 5000 的杂费
                           if val != 10000 and val >= min_limit: 
                               valid_prices.append(val)
                       except: pass
                   
-                  # 打印价格侦探日志 (让你看清 7600 是哪来的)
-                  print(f'      🔎 原始抓取: {debug_prices}')
-                  print(f'      🧹 清洗之后: {valid_prices}')
+                  # 打印 debug 信息 (看看噪音是不是少了)
+                  # print(f'      🔎 净化后抓取: {debug_prices}') 
                   
-                  # 找出清洗后的最低价
                   real_min_price = min(valid_prices) if valid_prices else 999999
                   
-                  # === 2. 判定是否有房 ===
-                  has_stock = re.search(r'剩\s*\d+\s*间', text_content)
-                  has_btn = 'reserve/input' in text_content or 'value=\"预订\"' in text_content
+                  # === 判定是否有房 ===
+                  # 关键字检查
+                  has_stock = re.search(r'剩\s*\d+\s*间', clean_text)
+                  has_btn = '预订' in clean_text or 'reserve' in clean_text.lower()
                   
                   is_available = False
                   status_msg = '😴 暂无空房'
 
-                  if has_stock or has_btn or (valid_prices and '没有空房' not in text_content):
+                  if has_stock or has_btn or (valid_prices and '没有空房' not in clean_text):
                       if real_min_price <= max_limit:
                           is_available = True
                           price_show = f'¥{real_min_price}' if real_min_price < 999999 else '价格未知'
@@ -147,7 +158,7 @@ jobs:
                   print(f'      ❌ 出错: {e}')
               print('-'*40)
 
-          # 发送邮件 (修复 price 变量未定义问题)
+          # 发送邮件 (已修复变量名报错)
           if found_list:
               print(f'\n📧 发现 {len(found_list)} 个符合条件的目标...')
               
@@ -158,15 +169,16 @@ jobs:
               else:
                   try:
                       first = found_list[0]
-                      # 修复点：这里原来可能写错了，现在统一用 first['price']
+                      # ✅ 修复点：正确使用字典访问变量
                       p_val = first['price']
+                      checkin_str = first['date'] 
+                      
                       p_title = f'¥{p_val}' if p_val > 0 else '有房'
-                      subject_txt = f'【有房】{first["date"]} {p_title} (符合预算)'
+                      subject_txt = f'【有房】{checkin_str} {p_title} (符合预算)'
                       
                       email_body = '<h3>🎉 发现符合预算的空房：</h3><ul>'
                       for item in found_list:
-                          # 修复点：确保这里用 item['price']
-                          i_price = item['price']
+                          i_price = item["price"]
                           p_str = f'¥{i_price}' if i_price > 0 else '有空房'
                           email_body += f'<li><strong>{item["date"]} (店号{item["id"]})</strong><br>价格: <span style="color:red">{p_str}</span><br><a href=\"{item["url"]}\">👉 点击立即预订</a></li>'
                       email_body += '</ul>'
