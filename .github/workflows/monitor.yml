@@ -2,8 +2,11 @@ name: 东横Inn 监控 (15分钟版)
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # ⏱️ 已改为 15 分钟运行一次
-  workflow_dispatch:        # 支持手动运行
+    - cron: '*/15 * * * *'  # 定时
+  workflow_dispatch:        # 手动
+  push:                     # 增加这一行：只要有代码提交就运行
+    branches:
+      - main
 
 jobs:
   check_rooms:
