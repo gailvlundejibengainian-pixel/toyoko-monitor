@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (手术刀去噪版)
+name: 东横Inn 监控 (严格逻辑版)
 
 on:
   schedule:
@@ -54,12 +54,11 @@ jobs:
               print('❌ 错误：找不到 urls.txt')
               exit(1)
 
-          print(f'📋 启动监控: {len(urls)} 个任务 (逻辑: 去除页眉页脚噪音 + 修复邮件报错)\n')
+          print(f'📋 启动监控: {len(urls)} 个任务 (逻辑: 仅当抓到价格或库存时才算有房)\n')
           
           found_list = []
 
           for i, url in enumerate(urls):
-              # 解析 URL 参数
               try:
                   parsed = urlparse(url)
                   params = parse_qs(parsed.query)
@@ -75,7 +74,6 @@ jobs:
                   if 'min' in params:
                       try: min_limit = int(params['min'][0])
                       except: pass
-                      
               except:
                   hotel_id, checkin_date = '未知', '未知'
                   max_limit = 999999
@@ -87,60 +85,54 @@ jobs:
               try:
                   resp = requests.get(url, headers=headers, timeout=30)
                   
-                  # === 🔥 关键手术：去除页眉页脚噪音 🔥 ===
+                  # === 1. 清洗网页 ===
                   soup = BeautifulSoup(resp.text, 'html.parser')
-                  
-                  # 1. 移除 script, style (防干扰)
-                  for script in soup(['script', 'style', 'noscript', 'iframe']):
-                      script.decompose()
-                      
-                  # 2. 移除 Header 和 Footer (7600 和 8000 通常在这里)
-                  # 这一步会删掉网页顶部导航和底部版权区
-                  for trash in soup(['header', 'footer', 'nav']):
+                  for trash in soup(['script', 'style', 'noscript', 'iframe', 'header', 'footer', 'nav']):
                       trash.decompose()
-
-                  # 3. 针对性移除常见的底部链接区 (通常包含很多无关数字)
-                  # 尝试移除 class 包含 footer 或 header 的 div
                   for div in soup.find_all('div', class_=re.compile(r'footer|header|banner|advert')):
                       div.decompose()
 
-                  # 只获取清洗后的纯文本
                   clean_text = soup.get_text()
                   
-                  # === 价格提取 ===
+                  # === 2. 提取价格 ===
                   valid_prices = []
-                  # 正则匹配
                   raw_matches = re.findall(r'¥\s*([0-9,]+)', clean_text)
                   
-                  debug_prices = []
                   for p in raw_matches:
                       try:
                           val = int(p.replace(',', ''))
-                          debug_prices.append(val)
                           if val != 10000 and val >= min_limit: 
                               valid_prices.append(val)
                       except: pass
                   
-                  # 打印 debug 信息 (看看噪音是不是少了)
-                  # print(f'      🔎 净化后抓取: {debug_prices}') 
-                  
                   real_min_price = min(valid_prices) if valid_prices else 999999
                   
-                  # === 判定是否有房 ===
-                  # 关键字检查
+                  # === 3. 判定是否有房 (逻辑修正) ===
                   has_stock = re.search(r'剩\s*\d+\s*间', clean_text)
-                  has_btn = '预订' in clean_text or 'reserve' in clean_text.lower()
                   
                   is_available = False
                   status_msg = '😴 暂无空房'
 
-                  if has_stock or has_btn or (valid_prices and '没有空房' not in clean_text):
+                  # 🔥 核心修正 🔥
+                  # 以前是: 只要看见“预订”二字就算有房 -> 导致误判
+                  # 现在是: 必须【抓到了有效价格】或者【看见了“剩X间”】才算有房
+                  
+                  if valid_prices:
+                      # 抓到了真实价格，说明真的有房
                       if real_min_price <= max_limit:
                           is_available = True
-                          price_show = f'¥{real_min_price}' if real_min_price < 999999 else '价格未知'
-                          status_msg = f'🎉 发现空房且价格合适! (最低 {price_show})'
+                          status_msg = f'🎉 发现空房且价格合适! (最低 ¥{real_min_price})'
                       else:
                           status_msg = f'💸 有房但太贵 (最低 ¥{real_min_price} > 预算 {max_limit})'
+                  
+                  elif has_stock:
+                      # 没抓到价格，但是看到了“剩 1 间”，可能是价格格式变了，先报警
+                      is_available = True
+                      status_msg = f'🎉 发现空房! (库存提示: {has_stock.group()}, 价格未识别)'
+                  
+                  else:
+                      # 既没价格，也没库存 -> 那就是真的没房
+                      status_msg = '😴 暂无空房'
                   
                   print(f'      {status_msg}')
 
@@ -158,7 +150,7 @@ jobs:
                   print(f'      ❌ 出错: {e}')
               print('-'*40)
 
-          # 发送邮件 (已修复变量名报错)
+          # 发送邮件
           if found_list:
               print(f'\n📧 发现 {len(found_list)} 个符合条件的目标...')
               
@@ -169,7 +161,6 @@ jobs:
               else:
                   try:
                       first = found_list[0]
-                      # ✅ 修复点：正确使用字典访问变量
                       p_val = first['price']
                       checkin_str = first['date'] 
                       
