@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (价格筛选最终版)
+name: 东横Inn 监控 (智能区间版)
 
 on:
   schedule:
@@ -35,6 +35,7 @@ jobs:
           import time
           from urllib.parse import urlparse, parse_qs
           import re
+          import traceback
 
           # 1. 基础配置
           resend.api_key = os.environ.get('RESEND_API_KEY')
@@ -53,7 +54,7 @@ jobs:
               print('❌ 错误：找不到 urls.txt')
               exit(1)
 
-          print(f'📋 启动监控: {len(urls)} 个任务 (含比价功能)\n')
+          print(f'📋 启动监控: {len(urls)} 个任务 (逻辑: 过滤杂费，只看区间)\n')
           
           found_list = []
 
@@ -65,58 +66,69 @@ jobs:
                   hotel_id = params.get('hotel', ['未知'])[0]
                   checkin_date = params.get('start', ['未知'])[0]
                   
-                  # === 获取用户设定的价格上限 ===
-                  max_price_limit = None
+                  # === 获取用户设定的价格上限 (Max) ===
+                  max_limit = 999999 # 默认无限
                   if 'max' in params:
                       try:
-                          max_price_limit = int(params['max'][0])
+                          max_limit = int(params['max'][0])
                       except: pass
+                  
+                  # === 获取用户设定的价格下限 (Min) ===
+                  # 默认为 5000，防止抓取到 ¥1500 的入会费
+                  min_limit = 5000 
+                  if 'min' in params:
+                      try:
+                          min_limit = int(params['min'][0])
+                      except: pass
+                      
               except:
                   hotel_id, checkin_date = '未知', '未知'
-                  max_price_limit = None
+                  max_limit = 999999
+                  min_limit = 5000
 
-              limit_info = f' (限价: ¥{max_price_limit})' if max_price_limit else ''
+              limit_info = f' (预算: {min_limit}~{max_limit})'
               print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {checkin_date}{limit_info}')
               
               try:
                   resp = requests.get(url, headers=headers, timeout=30)
                   text_content = resp.text
                   
-                  # === 1. 提取页面所有有效价格 (自动去逗号) ===
-                  found_prices = []
+                  # === 1. 提取并清洗价格 ===
+                  valid_prices = []
                   raw_prices = re.findall(r'¥\s*([0-9,]+)', text_content)
                   for p in raw_prices:
                       try:
                           val = int(p.replace(',', ''))
-                          if val != 10000: # 排除干扰项
-                              found_prices.append(val)
+                          
+                          # 🔥 核心过滤逻辑 🔥
+                          # 1. 排除干扰项 10000
+                          # 2. 排除低于下限的 (比如 1500 会员费)
+                          if val != 10000 and val >= min_limit: 
+                              valid_prices.append(val)
                       except: pass
                   
-                  # 找出最低价
-                  min_price = min(found_prices) if found_prices else 999999
+                  # 找出清洗后的最低价
+                  real_min_price = min(valid_prices) if valid_prices else 999999
                   
                   # === 2. 判定是否有房 ===
-                  # 只要有库存、或者有预订按钮、或者有真实价格，就算有房
                   has_stock = re.search(r'剩\s*\d+\s*间', text_content)
                   has_btn = 'reserve/input' in text_content or 'value=\"预订\"' in text_content
                   
                   is_available = False
                   status_msg = '😴 暂无空房'
 
-                  # 只有当确实检测到有房迹象时，才进入价格判断
-                  if has_stock or has_btn or (found_prices and '没有空房' not in text_content):
-                      # 价格过滤逻辑
-                      if max_price_limit:
-                          if min_price <= max_price_limit:
-                              is_available = True
-                              status_msg = f'🎉 发现空房且价格达标! (最低 ¥{min_price})'
-                          else:
-                              status_msg = f'💸 有房但太贵 (最低 ¥{min_price} > 限价 ¥{max_price_limit})'
-                      else:
-                          # 没设限价，直接报喜
+                  # 只有当 (有库存 或 有按钮 或 找到了有效价格) 时才判断
+                  if has_stock or has_btn or (valid_prices and '没有空房' not in text_content):
+                      
+                      # 价格判定
+                      if real_min_price <= max_limit:
                           is_available = True
-                          price_show = f'¥{min_price}' if min_price < 999999 else '未知'
-                          status_msg = f'🎉 发现空房! (最低 {price_show})'
+                          price_show = f'¥{real_min_price}' if real_min_price < 999999 else '价格未知'
+                          status_msg = f'🎉 发现空房且价格合适! (最低 {price_show})'
+                      else:
+                          # 虽然有房，但是最低价也比预算高
+                          # (例如: 最低 12000，但您只要 9900)
+                          status_msg = f'💸 有房但太贵 (最低 ¥{real_min_price} > 预算 {max_limit})'
                   
                   print(f'      {status_msg}')
 
@@ -125,7 +137,7 @@ jobs:
                           'id': hotel_id,
                           'date': checkin_date,
                           'url': url,
-                          'price': min_price if min_price < 999999 else 0
+                          'price': real_min_price if real_min_price < 999999 else 0
                       })
                   
                   time.sleep(2)
@@ -134,7 +146,7 @@ jobs:
                   print(f'      ❌ 出错: {e}')
               print('-'*40)
 
-          # 发送邮件
+          # 发送邮件 (加固版)
           if found_list:
               print(f'\n📧 发现 {len(found_list)} 个符合条件的目标...')
               
@@ -143,17 +155,17 @@ jobs:
               elif not resend.api_key:
                   print('❌ RESEND_API_KEY 未配置')
               else:
-                  first = found_list[0]
-                  p_title = f'¥{first["price"]}' if first["price"] > 0 else '有房'
-                  subject_txt = f'【有房】{first["date"]} {p_title}'
-                  
-                  email_body = '<h3>🎉 发现符合预期的空房：</h3><ul>'
-                  for item in found_list:
-                      p_str = f'¥{item["price"]}' if item["price"] > 0 else '有空房'
-                      email_body += f'<li><strong>{item["date"]} (店号{item["id"]})</strong> | 价格: <span style="color:red">{p_str}</span><br><a href=\"{item["url"]}\">👉 点击立即预订</a></li>'
-                  email_body += '</ul>'
-                  
                   try:
+                      first = found_list[0]
+                      p_title = f'¥{first["price"]}' if first["price"] > 0 else '有房'
+                      subject_txt = f'【有房】{first["date"]} {p_title} (符合预算)'
+                      
+                      email_body = '<h3>🎉 发现符合 {5000}~{max} 预算的空房：</h3><ul>'
+                      for item in found_list:
+                          p_str = f'¥{item["price"]}' if item["price"] > 0 else '有空房'
+                          email_body += f'<li><strong>{item["date"]} (店号{item["id"]})</strong><br>价格: <span style="color:red">{p_str}</span><br><a href=\"{item["url"]}\">👉 点击立即预订</a></li>'
+                      email_body += '</ul>'
+                  
                       resend.Emails.send({
                         'from': 'onboarding@resend.dev',
                         'to': user_email,
@@ -163,6 +175,7 @@ jobs:
                       print('✅ 邮件发送成功！')
                   except Exception as e:
                       print(f'❌ 邮件发送失败: {e}')
+                      traceback.print_exc() # 打印详细报错信息，方便排查
           else:
               print('\n🏁 监控结束，无符合条件房源。')
           "
