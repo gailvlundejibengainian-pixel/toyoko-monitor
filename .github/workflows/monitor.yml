@@ -2,7 +2,7 @@ name: 东横Inn 监控 (15分钟版)
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # 定时
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:        # 手动
   push:                     # 增加这一行：只要有代码提交就运行
     branches:
