@@ -1,7 +1,6 @@
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00104&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=9999
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00145&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=9999
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00327&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=9999
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00337&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=9999
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00083&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=9999
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00224&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=9999
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00083&people=2&room=1&smoking=all&start=2026-02-22&end=2026-02-23&max=9999
+https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00104&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=11900
+https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00145&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=11600
+https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00327&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=13400
+https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00337&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=11400
+https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00083&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=12800
+https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00224&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=12600
