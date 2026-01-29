@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (严格逻辑版)
+name: 东横Inn 监控 (v7.0 稳定发信版)
 
 on:
   schedule:
@@ -54,7 +54,7 @@ jobs:
               print('❌ 错误：找不到 urls.txt')
               exit(1)
 
-          print(f'📋 启动监控: {len(urls)} 个任务 (逻辑: 仅当抓到价格或库存时才算有房)\n')
+          print(f'📋 启动监控: {len(urls)} 个任务 (v7.0 修复邮件变量名)\n')
           
           found_list = []
 
@@ -85,7 +85,7 @@ jobs:
               try:
                   resp = requests.get(url, headers=headers, timeout=30)
                   
-                  # === 1. 清洗网页 ===
+                  # === 1. 清洗网页 (手术刀去噪) ===
                   soup = BeautifulSoup(resp.text, 'html.parser')
                   for trash in soup(['script', 'style', 'noscript', 'iframe', 'header', 'footer', 'nav']):
                       trash.decompose()
@@ -107,18 +107,14 @@ jobs:
                   
                   real_min_price = min(valid_prices) if valid_prices else 999999
                   
-                  # === 3. 判定是否有房 (逻辑修正) ===
+                  # === 3. 判定是否有房 ===
                   has_stock = re.search(r'剩\s*\d+\s*间', clean_text)
                   
                   is_available = False
                   status_msg = '😴 暂无空房'
-
-                  # 🔥 核心修正 🔥
-                  # 以前是: 只要看见“预订”二字就算有房 -> 导致误判
-                  # 现在是: 必须【抓到了有效价格】或者【看见了“剩X间”】才算有房
                   
                   if valid_prices:
-                      # 抓到了真实价格，说明真的有房
+                      # 抓到了真实价格
                       if real_min_price <= max_limit:
                           is_available = True
                           status_msg = f'🎉 发现空房且价格合适! (最低 ¥{real_min_price})'
@@ -126,13 +122,9 @@ jobs:
                           status_msg = f'💸 有房但太贵 (最低 ¥{real_min_price} > 预算 {max_limit})'
                   
                   elif has_stock:
-                      # 没抓到价格，但是看到了“剩 1 间”，可能是价格格式变了，先报警
+                      # 没抓到价格，但是看到了“剩 1 间”
                       is_available = True
                       status_msg = f'🎉 发现空房! (库存提示: {has_stock.group()}, 价格未识别)'
-                  
-                  else:
-                      # 既没价格，也没库存 -> 那就是真的没房
-                      status_msg = '😴 暂无空房'
                   
                   print(f'      {status_msg}')
 
@@ -150,7 +142,7 @@ jobs:
                   print(f'      ❌ 出错: {e}')
               print('-'*40)
 
-          # 发送邮件
+          # === 发送邮件 (v7.0 重写版) ===
           if found_list:
               print(f'\n📧 发现 {len(found_list)} 个符合条件的目标...')
               
@@ -160,18 +152,25 @@ jobs:
                   print('❌ RESEND_API_KEY 未配置')
               else:
                   try:
-                      first = found_list[0]
-                      p_val = first['price']
-                      checkin_str = first['date'] 
+                      # 准备邮件内容
+                      first_item = found_list[0]
+                      # 确保变量名不混淆
+                      first_price = first_item['price']
+                      first_date = first_item['date']
                       
-                      p_title = f'¥{p_val}' if p_val > 0 else '有房'
-                      subject_txt = f'【有房】{checkin_str} {p_title} (符合预算)'
+                      title_price = f'¥{first_price}' if first_price > 0 else '有房'
+                      subject_txt = f'【有房】{first_date} {title_price} (符合预算)'
                       
                       email_body = '<h3>🎉 发现符合预算的空房：</h3><ul>'
-                      for item in found_list:
-                          i_price = item["price"]
-                          p_str = f'¥{i_price}' if i_price > 0 else '有空房'
-                          email_body += f'<li><strong>{item["date"]} (店号{item["id"]})</strong><br>价格: <span style="color:red">{p_str}</span><br><a href=\"{item["url"]}\">👉 点击立即预订</a></li>'
+                      for room in found_list:
+                          # 明确变量名 room_price
+                          room_price = room['price']
+                          room_url = room['url']
+                          room_date = room['date']
+                          room_id = room['id']
+                          
+                          price_str = f'¥{room_price}' if room_price > 0 else '有空房'
+                          email_body += f'<li><strong>{room_date} (店号{room_id})</strong><br>价格: <span style="color:red">{price_str}</span><br><a href=\"{room_url}\">👉 点击立即预订</a></li>'
                       email_body += '</ul>'
                   
                       resend.Emails.send({
