@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (v7.0 稳定发信版)
+name: 东横Inn 监控 (v8.0 显示酒店名版)
 
 on:
   schedule:
@@ -54,7 +54,7 @@ jobs:
               print('❌ 错误：找不到 urls.txt')
               exit(1)
 
-          print(f'📋 启动监控: {len(urls)} 个任务 (v7.0 修复邮件变量名)\n')
+          print(f'📋 启动监控: {len(urls)} 个任务 (v8.0 显示酒店名称)\n')
           
           found_list = []
 
@@ -79,14 +79,36 @@ jobs:
                   max_limit = 999999
                   min_limit = 5000
 
-              limit_info = f' (预算: {min_limit}~{max_limit})'
-              print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {checkin_date}{limit_info}')
+              # 占位符，稍后获取
+              hotel_name = '' 
               
               try:
                   resp = requests.get(url, headers=headers, timeout=30)
+                  soup = BeautifulSoup(resp.text, 'html.parser')
+
+                  # === 0. 在清洗前，先尝试抓取酒店名字 ===
+                  try:
+                      # 策略A: 找页面里的 H1 (通常是店名)
+                      h1 = soup.find('h1')
+                      if h1 and '隐私' not in h1.get_text():
+                          hotel_name = h1.get_text(strip=True)
+                      
+                      # 策略B: 如果 H1 是通用的'选择套餐'，尝试找特定 class
+                      if not hotel_name or '选择套餐' in hotel_name:
+                          # 尝试找含有 '东横INN' 字样的标题
+                          target = soup.find(string=re.compile('东横INN'))
+                          if target:
+                              hotel_name = target.strip()
+                  except:
+                      hotel_name = '未知酒店'
+
+                  # 格式化显示
+                  name_display = f'({hotel_name})' if hotel_name else ''
+                  limit_info = f' (预算: {min_limit}~{max_limit})'
+                  print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} {name_display} | 📅 {checkin_date}{limit_info}')
                   
                   # === 1. 清洗网页 (手术刀去噪) ===
-                  soup = BeautifulSoup(resp.text, 'html.parser')
+                  # 移除干扰元素
                   for trash in soup(['script', 'style', 'noscript', 'iframe', 'header', 'footer', 'nav']):
                       trash.decompose()
                   for div in soup.find_all('div', class_=re.compile(r'footer|header|banner|advert')):
@@ -111,26 +133,25 @@ jobs:
                   has_stock = re.search(r'剩\s*\d+\s*间', clean_text)
                   
                   is_available = False
-                  status_msg = '😴 暂无空房'
+                  status_msg = '      😴 暂无空房'
                   
                   if valid_prices:
-                      # 抓到了真实价格
                       if real_min_price <= max_limit:
                           is_available = True
-                          status_msg = f'🎉 发现空房且价格合适! (最低 ¥{real_min_price})'
+                          status_msg = f'      🎉 发现空房且价格合适! (最低 ¥{real_min_price})'
                       else:
-                          status_msg = f'💸 有房但太贵 (最低 ¥{real_min_price} > 预算 {max_limit})'
+                          status_msg = f'      💸 有房但太贵 (最低 ¥{real_min_price} > 预算 {max_limit})'
                   
                   elif has_stock:
-                      # 没抓到价格，但是看到了“剩 1 间”
                       is_available = True
-                      status_msg = f'🎉 发现空房! (库存提示: {has_stock.group()}, 价格未识别)'
+                      status_msg = f'      🎉 发现空房! (库存提示: {has_stock.group()}, 价格未识别)'
                   
-                  print(f'      {status_msg}')
+                  print(status_msg)
 
                   if is_available:
                       found_list.append({
                           'id': hotel_id,
+                          'name': hotel_name, # 新增名字字段
                           'date': checkin_date,
                           'url': url,
                           'price': real_min_price if real_min_price < 999999 else 0
@@ -142,7 +163,7 @@ jobs:
                   print(f'      ❌ 出错: {e}')
               print('-'*40)
 
-          # === 发送邮件 (v7.0 重写版) ===
+          # === 发送邮件 (带酒店名) ===
           if found_list:
               print(f'\n📧 发现 {len(found_list)} 个符合条件的目标...')
               
@@ -152,25 +173,25 @@ jobs:
                   print('❌ RESEND_API_KEY 未配置')
               else:
                   try:
-                      # 准备邮件内容
                       first_item = found_list[0]
-                      # 确保变量名不混淆
                       first_price = first_item['price']
                       first_date = first_item['date']
+                      first_name = first_item['name']
                       
                       title_price = f'¥{first_price}' if first_price > 0 else '有房'
-                      subject_txt = f'【有房】{first_date} {title_price} (符合预算)'
+                      # 邮件标题带上酒店名
+                      subject_txt = f'【有房】{first_name} {first_date} {title_price}'
                       
                       email_body = '<h3>🎉 发现符合预算的空房：</h3><ul>'
                       for room in found_list:
-                          # 明确变量名 room_price
                           room_price = room['price']
                           room_url = room['url']
                           room_date = room['date']
                           room_id = room['id']
+                          room_name = room['name']
                           
                           price_str = f'¥{room_price}' if room_price > 0 else '有空房'
-                          email_body += f'<li><strong>{room_date} (店号{room_id})</strong><br>价格: <span style="color:red">{price_str}</span><br><a href=\"{room_url}\">👉 点击立即预订</a></li>'
+                          email_body += f'<li><strong>{room_name} ({room_id})</strong><br>日期: {room_date}<br>价格: <span style="color:red">{price_str}</span><br><a href=\"{room_url}\">👉 点击立即预订</a></li><br>'
                       email_body += '</ul>'
                   
                       resend.Emails.send({
