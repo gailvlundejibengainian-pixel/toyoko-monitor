@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (v13.1 修复语法报错版)
+name: 东横Inn 监控 (v15.0 全兼容容错版)
 
 on:
   schedule:
@@ -38,85 +38,78 @@ jobs:
           import traceback
           from datetime import datetime, timedelta, timezone
 
-          # === 0. 时间控制器逻辑 ===
+          # === 0. 时间控制器 (保持不变) ===
           def check_is_run_time():
               tz_beijing = timezone(timedelta(hours=8))
               now = datetime.now(tz_beijing)
               current_hour = now.hour
-              
               print(f'🕒 当前北京时间: {now.strftime(\"%Y-%m-%d %H:%M:%S\")}')
-
               try:
                   with open('run_time.txt', 'r') as f:
                       content = f.read().strip()
                       if '-' in content:
                           start_str, end_str = content.split('-')
-                          start_h = int(start_str)
-                          end_h = int(end_str)
-                          
+                          start_h, end_h = int(start_str), int(end_str)
                           is_running = False
                           if start_h <= end_h:
-                              if start_h <= current_hour <= end_h:
-                                  is_running = True
+                              if start_h <= current_hour <= end_h: is_running = True
                           else:
-                              if current_hour >= start_h or current_hour <= end_h:
-                                  is_running = True
-                                  
+                              if current_hour >= start_h or current_hour <= end_h: is_running = True
+                          
                           if not is_running:
-                              print(f'💤 也就是非运行时间 (设定: {start_h}:00 - {end_h}:59)')
-                              print('💤 脚本进入休眠模式，不执行查询。')
+                              print(f'💤 休眠时间 ({start_h}-{end_h})，跳过查询。')
                               return False
-                          else:
-                              print(f'✅ 处于运行时间段 ({start_h}-{end_h})，继续执行...')
-                              return True
-              except FileNotFoundError:
-                  print('⚠️ 未找到 run_time.txt，默认全天候运行 (24h)。')
-                  return True
-              except Exception as e:
-                  print(f'⚠️ 时间配置解析错误: {e}，默认继续运行。')
-                  return True
-              
+                          print(f'✅ 运行时间 ({start_h}-{end_h})，继续...')
+              except: pass
               return True
 
-          if not check_is_run_time():
-              exit(0)
+          if not check_is_run_time(): exit(0)
 
           # === 配置区 ===
           resend.api_key = os.environ.get('RESEND_API_KEY')
           user_email = os.environ.get('USER_EMAIL', '').strip()
-          
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           }
 
+          # === 1. 读取并清洗 urls.txt ===
+          clean_urls = []
           try:
               with open('urls.txt', 'r') as f:
-                  urls = [line.strip() for line in f if line.strip()]
+                  for line in f:
+                      line = line.strip()
+                      # 🔥 关键修复：跳过空行和注释行
+                      if not line or line.startswith('#'):
+                          continue
+                      clean_urls.append(line)
           except FileNotFoundError:
               print('❌ 错误：找不到 urls.txt')
               exit(1)
 
-          print(f'\n📋 启动监控: {len(urls)} 个任务 (v13.1 修复引号冲突)\n')
+          print(f'\n📋 启动监控: {len(clean_urls)} 个任务 (v15.0 全兼容版)\n')
           
           found_list = []
 
-          for i, url in enumerate(urls):
+          for i, url in enumerate(clean_urls):
               try:
+                  # === 2. 参数解析 (兼容旧版和新版参数) ===
                   parsed = urlparse(url)
                   params = parse_qs(parsed.query)
                   
                   hotel_id = params.get('hotel', ['未知'])[0]
                   checkin_date = params.get('start', ['未知'])[0]
                   
+                  # 价格上限 (旧版: max, 新版: max - 通用)
                   max_price = 999999
                   if 'max' in params:
                       try: max_price = int(params['max'][0])
                       except: pass
                   
+                  # 目标房型 (新版参数)
                   target_room = None
-                  if 'roomtype' in params:
-                      target_room = unquote(params['roomtype'][0])
-
+                  if 'roomtype' in params: target_room = unquote(params['roomtype'][0])
+                  
+                  # 吸烟筛选 (新版参数)
                   target_smoke = None 
                   if 'smoke' in params:
                       val = params['smoke'][0]
@@ -126,21 +119,22 @@ jobs:
               except:
                   hotel_id, checkin_date = '未知', '未知'
                   max_price = 999999
-                  target_room = None
-                  target_smoke = None
+                  target_room, target_smoke = None, None
 
-              req_info = []
-              if target_room: req_info.append(f'房型[{target_room}]')
-              if target_smoke is True: req_info.append('[🚬吸烟]')
-              elif target_smoke is False: req_info.append('[🚭禁烟]')
-              if max_price < 999999: req_info.append(f'预算<{max_price}')
+              # 打印任务简报
+              filter_info = []
+              if max_price < 999999: filter_info.append(f'<{max_price}')
+              if target_room: filter_info.append(f'[{target_room}]')
+              if target_smoke is True: filter_info.append('[吸烟]')
+              elif target_smoke is False: filter_info.append('[禁烟]')
               
-              req_str = ', '.join(req_info) if req_info else '无筛选'
-              print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {checkin_date} | {req_str}')
+              req_str = ', '.join(filter_info) if filter_info else '无筛选'
+              print(f'[{i+1}/{len(clean_urls)}] 🏨 {hotel_id} | 📅 {checkin_date} | {req_str}')
 
               try:
                   resp = requests.get(url, headers=headers, timeout=30)
                   
+                  # 维护检测
                   if '__NEXT_DATA__' not in resp.text and ('系统维护' in resp.text or 'maintenance' in resp.text.lower()):
                       print(f'      🚧 官网系统维护中')
                       print('-'*40)
@@ -150,28 +144,46 @@ jobs:
                   script = soup.find('script', id='__NEXT_DATA__')
                   
                   if not script:
-                      print('      ⚠️ 无法获取 JSON 数据')
+                      print('      ⚠️ 无法获取 JSON 数据 (可能反爬或维护)')
                       print('-'*40)
                       continue
                       
                   data = json.loads(script.string)
                   
+                  # 获取酒店名
+                  hotel_name = f'酒店{hotel_id}'
                   try:
                       hotel_name = data['props']['pageProps']['hotel']['hotelName']
-                  except:
-                      hotel_name = f'酒店{hotel_id}'
+                  except: pass
 
+                  # 🔥 关键修复：防御性获取房型列表
+                  # 以前没找到 roomPlanList 会报错，现在如果没有，就当空列表处理
+                  room_plan_list = []
                   try:
-                      room_plan_list = data['props']['pageProps']['roomPlanList']
-                  except KeyError:
-                      print('      ⚠️ JSON 结构异常')
+                      page_props = data.get('props', {}).get('pageProps', {})
+                      room_plan_list = page_props.get('roomPlanList', [])
+                      
+                      # 如果是 None (有些时候 API 返回 null)，转为空列表
+                      if room_plan_list is None:
+                          room_plan_list = []
+                          
+                  except Exception as e:
+                      print(f'      ⚠️ 数据解析警告: {e}')
+                      continue
+
+                  # 如果列表为空，说明真的没房了(或没开放)
+                  if not room_plan_list:
+                      print('      😴 该日期暂无任何可预订方案')
+                      print('-'*40)
                       continue
 
                   valid_rooms = []
                   
+                  # 遍历所有方案
                   for plan in room_plan_list:
                       room_types = plan.get('roomTypes', [])
                       for room in room_types:
+                          # 提取属性
                           r_name = room.get('roomTypeName', '')
                           specs = room.get('specs', {})
                           is_smoking = specs.get('isSmoking', False)
@@ -183,11 +195,21 @@ jobs:
                           price_obj = room.get('price', {})
                           price = price_obj.get('generalPrice', 999999)
                           
+                          # --- 筛选逻辑 (全兼容) ---
+                          
+                          # 1. 必须有库存
                           if stock <= 0: continue 
-                          if target_room and target_room not in r_name: continue
-                          if target_smoke is not None and target_smoke != is_smoking: continue
+                          
+                          # 2. 价格筛选 (兼容旧版: 如果URL有max参数就生效)
                           if price > max_price: continue
 
+                          # 3. 房型名称筛选 (兼容新版: 如果URL有roomtype参数就生效)
+                          if target_room and target_room not in r_name: continue
+
+                          # 4. 吸烟筛选 (兼容新版: 如果URL有smoke参数就生效)
+                          if target_smoke is not None and target_smoke != is_smoking: continue
+
+                          # --- 通过筛选 ---
                           smoke_str = '吸烟' if is_smoking else '禁烟'
                           
                           valid_rooms.append({
@@ -199,8 +221,9 @@ jobs:
                           })
 
                   if valid_rooms:
+                      # 找到最便宜的
                       best = min(valid_rooms, key=lambda x: x['price'])
-                      # 修复点：先把变量取出来，防止 f-string 引号打架
+                      # 提取变量避免 f-string 冲突
                       b_name = best['name']
                       b_smoke = best['smoke']
                       b_price = best['price']
@@ -217,7 +240,7 @@ jobs:
                           'details': valid_rooms
                       })
                   else:
-                      print(f'      😴 无符合房源')
+                      print(f'      😴 无符合筛选条件的房源')
                   
                   time.sleep(2)
 
@@ -226,6 +249,7 @@ jobs:
                   traceback.print_exc()
               print('-'*40)
 
+          # === 发送邮件 ===
           if found_list:
               print(f'\n📧 发现 {len(found_list)} 个目标，发送邮件...')
               if not user_email or not resend.api_key:
@@ -233,7 +257,6 @@ jobs:
               else:
                   try:
                       first = found_list[0]
-                      # 修复点：提取变量
                       f_name = first['name']
                       f_date = first['date']
                       f_room = first['room']
@@ -241,7 +264,6 @@ jobs:
                       
                       html = '<h3>🎉 发现符合筛选条件的空房：</h3>'
                       for item in found_list:
-                          # 修复点：提取变量
                           i_name = item['name']
                           i_date = item['date']
                           i_price = item['price']
@@ -253,7 +275,6 @@ jobs:
                           html += '<ul>'
                           deduplicated = {}
                           for d in item['details']:
-                              # 修复点：提取变量，避免引号嵌套
                               d_name = d['name']
                               d_smoke = d['smoke']
                               d_price = d['price']
