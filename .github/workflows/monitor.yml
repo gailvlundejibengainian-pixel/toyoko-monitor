@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (v17.0 经典回归版)
+name: 东横Inn 监控 (v18.0 终极融合版)
 
 on:
   schedule:
@@ -22,8 +22,8 @@ jobs:
       - name: 安装依赖
         run: pip install requests beautifulsoup4 resend
 
-      # 🔥 核心改变：先生成 py 文件，再运行。彻底杜绝 shell 语法报错。
-      - name: 生成脚本
+      # 🔥 核心：将复杂的 JSON 处理逻辑写入独立文件，防止 Shell 报错
+      - name: 生成并运行脚本
         run: |
           cat << 'EOF' > monitor.py
           import requests
@@ -32,27 +32,40 @@ jobs:
           import resend
           import time
           from urllib.parse import urlparse, parse_qs, unquote
-          import re
+          import json
           import traceback
           from datetime import datetime, timedelta, timezone
 
-          # === 0. 时间控制器 (北京时间 7点-24点运行) ===
+          # === 0. 时间控制器 ===
           try:
               tz_beijing = timezone(timedelta(hours=8))
               now = datetime.now(tz_beijing)
-              if 0 <= now.hour < 7:
-                  print(f'💤 夜间休眠模式 (当前 {now.strftime("%H:%M")})，脚本跳过。')
-                  exit(0)
+              # 如果有 run_time.txt 就读，没有就默认 24h
+              if os.path.exists('run_time.txt'):
+                  with open('run_time.txt', 'r') as f:
+                      content = f.read().strip()
+                      if '-' in content:
+                          s, e = map(int, content.split('-'))
+                          h = now.hour
+                          is_run = (s <= h <= e) if s <= e else (h >= s or h <= e)
+                          if not is_run:
+                              print(f'💤 休眠时间 ({s}-{e})，当前 {h} 点。')
+                              exit(0)
           except: pass
 
           # === 配置区 ===
           resend.api_key = os.environ.get('RESEND_API_KEY')
           user_email = os.environ.get('USER_EMAIL', '').strip()
           
+          # 伪装头
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+              'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+              'Referer': 'https://www.toyoko-inn.com/china_cn/',
           }
 
+          # 读取 URL
           urls = []
           try:
               with open('urls.txt', 'r') as f:
@@ -64,136 +77,139 @@ jobs:
               print('❌ 找不到 urls.txt')
               exit(1)
 
-          print(f'\n📋 启动监控: {len(urls)} 个任务 (经典文本模式)\n')
+          print(f'\n📋 启动监控: {len(urls)} 个任务 (v18.0 JSON内核+安全外壳)\n')
+          
+          session = requests.Session()
+          session.headers.update(headers)
           
           found_list = []
 
           for i, url in enumerate(urls):
+              # === 参数解析 (批处理逻辑) ===
               try:
                   parsed = urlparse(url)
                   params = parse_qs(parsed.query)
                   hotel_id = params.get('hotel', ['未知'])[0]
                   checkin_date = params.get('start', ['未知'])[0]
                   
-                  # 价格上限
                   max_price = 999999
                   if 'max' in params:
                       try: max_price = int(params['max'][0])
                       except: pass
                   
-                  # 房型关键字 (如: 博爱)
                   target_room = None
-                  if 'roomtype' in params:
-                      target_room = unquote(params['roomtype'][0])
-
+                  if 'roomtype' in params: target_room = unquote(params['roomtype'][0])
+                  
+                  target_smoke = None 
+                  if 'smoke' in params:
+                      val = params['smoke'][0]
+                      if val == '1': target_smoke = True
+                      elif val == '0': target_smoke = False
               except:
-                  hotel_id, checkin_date = '未知', '未知'
+                  hotel_id = '未知'
+                  checkin_date = '未知'
                   max_price = 999999
                   target_room = None
+                  target_smoke = None
 
-              print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {checkin_date} | <{max_price}')
+              # 打印任务详情
+              info = []
+              if max_price < 999999: info.append(f'<{max_price}')
+              if target_room: info.append(f'[{target_room}]')
+              if target_smoke is True: info.append('[吸烟]')
+              elif target_smoke is False: info.append('[禁烟]')
+              
+              print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {checkin_date} | {", ".join(info) or "无筛选"}')
 
-              try:
-                  # 模拟浏览器请求
-                  resp = requests.get(url, headers=headers, timeout=30)
-                  
-                  # 维护检测
-                  if '系统维护' in resp.text or 'maintenance' in resp.text.lower():
-                      if 'search' not in url: # 简单的误报过滤
-                          print('      🚧 官网系统维护中')
+              # === 抓取与重试 (JSON 模式) ===
+              for attempt in range(3):
+                  try:
+                      resp = session.get(url, timeout=30)
+                      
+                      # 维护检测
+                      if '__NEXT_DATA__' not in resp.text and ('系统维护' in resp.text or 'maintenance' in resp.text.lower()):
+                          print(f'      🚧 系统维护中 (尝试 {attempt+1})')
+                          time.sleep(5)
                           continue
 
-                  soup = BeautifulSoup(resp.text, 'html.parser')
-                  
-                  # === 1. 物理去噪 (切除头尾，防止 7600) ===
-                  for trash in soup(['script', 'style', 'noscript', 'iframe', 'header', 'footer', 'nav']):
-                      trash.decompose()
-                  for div in soup.find_all('div', class_=re.compile(r'footer|header|banner|advert')):
-                      div.decompose()
-
-                  # === 2. 文本锁定 ===
-                  # 如果指定了房型(如 博爱)，我们只看包含这几个字的那一小块区域
-                  search_scope = soup
-                  
-                  if target_room:
-                      # 找到包含关键字的标签
-                      targets = soup.find_all(string=re.compile(target_room))
-                      if not targets:
-                          # 页面里连这个词都没出现 -> 肯定没房
-                          print(f'      ⚠️ 未找到房型: {target_room} (已满房或不显示)')
+                      soup = BeautifulSoup(resp.text, 'html.parser')
+                      script = soup.find('script', id='__NEXT_DATA__')
+                      
+                      if not script:
+                          print(f'      ⚠️ 无 JSON 数据 (尝试 {attempt+1})')
+                          time.sleep(5)
                           continue
+                          
+                      data = json.loads(script.string)
+                      page_props = data.get('props', {}).get('pageProps', {})
                       
-                      # 提取这些标签的父级内容作为检查对象
-                      combined_text = ""
-                      for t in targets:
-                          # 向上找 5 层父级，确保包含价格
-                          parent = t.parent
-                          for _ in range(5):
-                              if parent and parent.parent: parent = parent.parent
-                          if parent:
-                              combined_text += parent.get_text() + "\n"
-                      
-                      clean_text = combined_text
-                  else:
-                      # 没指定房型，看全文
-                      clean_text = soup.get_text()
+                      # 这里的逻辑是：如果没拿到 roomPlanList，可能是空列表（没房），也可能是被拦截
+                      # 我们先默认它是没房，不报错
+                      room_plan_list = page_props.get('roomPlanList', [])
+                      if room_plan_list is None: room_plan_list = []
 
-                  # === 3. 提取价格 & 库存 ===
-                  # 找价格
-                  valid_prices = []
-                  raw_prices = re.findall(r'¥\s*([0-9,]+)', clean_text)
-                  for p in raw_prices:
-                      try:
-                          v = int(p.replace(',', ''))
-                          if v != 10000 and v >= 5000: # 过滤杂费
-                              valid_prices.append(v)
-                      except: pass
-                  
-                  # 找库存 (剩 X 间)
-                  has_stock = re.search(r'剩\s*(\d+)\s*间', clean_text)
-                  
-                  real_min_price = min(valid_prices) if valid_prices else 999999
-                  
-                  # === 4. 判定 ===
-                  is_found = False
-                  
-                  # 情况A: 抓到了价格，且小于预算
-                  if valid_prices and real_min_price <= max_price:
-                      is_found = True
-                      print(f'      🎉 发现价格! 最低 ¥{real_min_price}')
-                  
-                  # 情况B: 没抓到价格，但看到了库存提示 (可能是格式变了，先报警再说)
-                  elif has_stock:
-                      is_found = True
-                      print(f'      🎉 发现库存! {has_stock.group()}')
-                  
-                  else:
-                      if valid_prices:
-                          print(f'      💸 有房但太贵 (最低 ¥{real_min_price})')
-                      else:
-                          print('      😴 暂无空房')
-
-                  if is_found:
+                      # 获取酒店名
                       hotel_name = f'酒店{hotel_id}'
-                      try:
-                          # 尝试抓个标题当名字
-                          h1 = soup.find('h1')
-                          if h1: hotel_name = h1.get_text(strip=True)
+                      try: hotel_name = page_props['hotel']['hotelName']
                       except: pass
 
-                      found_list.append({
-                          'name': hotel_name,
-                          'date': checkin_date,
-                          'price': real_min_price if real_min_price < 999999 else '未知',
-                          'url': url,
-                          'room': target_room if target_room else '任意房型'
-                      })
+                      valid_rooms = []
                       
-                  time.sleep(2)
+                      # 遍历所有套餐和房型
+                      for plan in room_plan_list:
+                          room_types = plan.get('roomTypes', [])
+                          for room in room_types:
+                              r_name = room.get('roomTypeName', '')
+                              specs = room.get('specs', {})
+                              is_smoking = specs.get('isSmoking', False)
+                              
+                              vacant = room.get('vacant', {})
+                              stock = vacant.get('generalVacantRoom', 0)
+                              if stock is None: stock = 0
+                              
+                              price_obj = room.get('price', {})
+                              price = price_obj.get('generalPrice', 999999)
+                              
+                              # --- 筛选逻辑 ---
+                              if stock <= 0: continue 
+                              if price > max_price: continue
+                              if target_room and target_room not in r_name: continue
+                              if target_smoke is not None and target_smoke != is_smoking: continue
 
-              except Exception as e:
-                  print(f'      ❌ 出错: {e}')
+                              smoke_str = '吸烟' if is_smoking else '禁烟'
+                              valid_rooms.append({
+                                  'name': r_name,
+                                  'smoke': smoke_str,
+                                  'price': price,
+                                  'stock': stock,
+                                  'plan': plan.get('planName', '标准')
+                              })
+
+                      if valid_rooms:
+                          best = min(valid_rooms, key=lambda x: x['price'])
+                          print(f"      🎉 发现! {best['name']}({best['smoke']}) ¥{best['price']}")
+                          
+                          found_list.append({
+                              'name': hotel_name,
+                              'date': checkin_date,
+                              'url': url,
+                              'room': best['name'],
+                              'smoke': best['smoke'],
+                              'price': best['price'],
+                              'details': valid_rooms
+                          })
+                          break # 找到了就跳出重试
+                      else:
+                          # 成功解析了JSON，但没找到符合条件的
+                          print('      😴 无符合房源')
+                          break # 既然数据是准的，就不用重试了
+
+                  except Exception as e:
+                      print(f'      ❌ 错误: {e} (尝试 {attempt+1})')
+                      time.sleep(5)
+              
               print('-'*40)
+              time.sleep(2)
 
           # === 发送邮件 ===
           if found_list:
@@ -201,19 +217,28 @@ jobs:
               if user_email and resend.api_key:
                   try:
                       first = found_list[0]
-                      subj = f"【有房】{first['name']} {first['date']} ¥{first['price']}"
-                      body = "<h3>🎉 发现空房：</h3>"
+                      subj = f"【有房】{first['name']} {first['date']} {first['room']}"
+                      body = "<h3>🎉 发现目标：</h3>"
                       for item in found_list:
-                          body += f"<hr><p><strong>{item['name']}</strong><br>日期: {item['date']}<br>房型: {item['room']}<br>价格: ¥{item['price']}<br><a href='{item['url']}'>👉 立即预订</a></p>"
+                          body += f"<hr><h4>{item['name']} ({item['date']})</h4>"
+                          body += f"<p>最低: <span style='color:red'>¥{item['price']}</span></p>"
+                          body += f"<p><a href='{item['url']}'>👉 立即预订</a></p><ul>"
+                          dedup = set()
+                          for d in item['details']:
+                              key = f"{d['name']}-{d['smoke']}-{d['price']}"
+                              if key not in dedup:
+                                  dedup.add(key)
+                                  body += f"<li>{d['name']} ({d['smoke']}) ¥{d['price']} 剩{d['stock']}</li>"
+                          body += "</ul>"
                       
                       resend.Emails.send({'from': 'onboarding@resend.dev', 'to': user_email, 'subject': subj, 'html': body})
-                      print('✅ 邮件发送成功')
+                      print('✅ 发送成功')
                   except Exception as e:
                       print(f'❌ 发送失败: {e}')
               else:
                   print('❌ 邮箱未配置')
           else:
-              print('\n🏁 结束')
+              print('\n🏁 监控结束')
           EOF
           
           python monitor.py
