@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (v22.0 经典回归增强版)
+name: 东横Inn 监控 (v22.1 修复邮件配置版)
 
 on:
   schedule:
@@ -23,6 +23,10 @@ jobs:
         run: pip install requests beautifulsoup4 resend
 
       - name: 生成并运行脚本
+        # 🔥 修复点：就是这里！加上 env 才能读取到您的密钥
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          USER_EMAIL: ${{ secrets.USER_EMAIL }}
         run: |
           # 将 Python 代码写入文件 monitor.py，彻底避免 Shell 语法报错
           cat << 'EOF' > monitor.py
