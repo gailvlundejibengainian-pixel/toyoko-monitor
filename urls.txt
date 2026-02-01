@@ -1,16 +1,7 @@
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00104&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=11900
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00145&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=11600
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00327&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=13400
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00337&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=11400
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00083&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=12800
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00224&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=12600
+#https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00104&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=11900
+https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00145&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22
+#https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00327&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=13400
+#https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00337&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=11400
+#https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00083&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=12800
+#https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00224&people=2&room=1&smoking=all&start=2026-02-21&end=2026-02-22&max=12600
 
-
-# 任务1：广岛站南口右，必须是“博爱双床”，必须“吸烟”，价格不管
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00145&start=2026-02-26&end=2026-02-27&roomtype=博爱双床&smoke=1
-
-# 任务2：同一家店，只要是“单人房”，必须“禁烟”，预算 8000 以内
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00145&start=2026-02-26&end=2026-02-27&roomtype=单人&smoke=0&max=8000
-
-# 任务3：只要有房就行（捡漏模式）
-https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00083&start=2026-02-22&end=2026-02-23
