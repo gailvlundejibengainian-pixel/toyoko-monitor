@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (v18.0 终极融合版)
+name: 东横Inn 监控 (v18.1 实时日志版)
 
 on:
   schedule:
@@ -22,9 +22,9 @@ jobs:
       - name: 安装依赖
         run: pip install requests beautifulsoup4 resend
 
-      # 🔥 核心：将复杂的 JSON 处理逻辑写入独立文件，防止 Shell 报错
       - name: 生成并运行脚本
         run: |
+          # 1. 写入 Python 脚本文件 (彻底解决引号报错)
           cat << 'EOF' > monitor.py
           import requests
           from bs4 import BeautifulSoup
@@ -40,7 +40,6 @@ jobs:
           try:
               tz_beijing = timezone(timedelta(hours=8))
               now = datetime.now(tz_beijing)
-              # 如果有 run_time.txt 就读，没有就默认 24h
               if os.path.exists('run_time.txt'):
                   with open('run_time.txt', 'r') as f:
                       content = f.read().strip()
@@ -57,7 +56,6 @@ jobs:
           resend.api_key = os.environ.get('RESEND_API_KEY')
           user_email = os.environ.get('USER_EMAIL', '').strip()
           
-          # 伪装头
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -77,7 +75,7 @@ jobs:
               print('❌ 找不到 urls.txt')
               exit(1)
 
-          print(f'\n📋 启动监控: {len(urls)} 个任务 (v18.0 JSON内核+安全外壳)\n')
+          print(f'\n📋 启动监控: {len(urls)} 个任务 (v18.1 实时日志版)\n')
           
           session = requests.Session()
           session.headers.update(headers)
@@ -85,7 +83,7 @@ jobs:
           found_list = []
 
           for i, url in enumerate(urls):
-              # === 参数解析 (批处理逻辑) ===
+              # === 参数解析 ===
               try:
                   parsed = urlparse(url)
                   params = parse_qs(parsed.query)
@@ -112,7 +110,7 @@ jobs:
                   target_room = None
                   target_smoke = None
 
-              # 打印任务详情
+              # 打印任务详情 (这里打印的内容，您在网页日志里都能看到)
               info = []
               if max_price < 999999: info.append(f'<{max_price}')
               if target_room: info.append(f'[{target_room}]')
@@ -142,9 +140,6 @@ jobs:
                           
                       data = json.loads(script.string)
                       page_props = data.get('props', {}).get('pageProps', {})
-                      
-                      # 这里的逻辑是：如果没拿到 roomPlanList，可能是空列表（没房），也可能是被拦截
-                      # 我们先默认它是没房，不报错
                       room_plan_list = page_props.get('roomPlanList', [])
                       if room_plan_list is None: room_plan_list = []
 
@@ -155,7 +150,6 @@ jobs:
 
                       valid_rooms = []
                       
-                      # 遍历所有套餐和房型
                       for plan in room_plan_list:
                           room_types = plan.get('roomTypes', [])
                           for room in room_types:
@@ -170,7 +164,7 @@ jobs:
                               price_obj = room.get('price', {})
                               price = price_obj.get('generalPrice', 999999)
                               
-                              # --- 筛选逻辑 ---
+                              # 筛选
                               if stock <= 0: continue 
                               if price > max_price: continue
                               if target_room and target_room not in r_name: continue
@@ -187,6 +181,7 @@ jobs:
 
                       if valid_rooms:
                           best = min(valid_rooms, key=lambda x: x['price'])
+                          # 这里打印的 "🎉 发现!" 也会直接显示
                           print(f"      🎉 发现! {best['name']}({best['smoke']}) ¥{best['price']}")
                           
                           found_list.append({
@@ -198,11 +193,10 @@ jobs:
                               'price': best['price'],
                               'details': valid_rooms
                           })
-                          break # 找到了就跳出重试
+                          break 
                       else:
-                          # 成功解析了JSON，但没找到符合条件的
                           print('      😴 无符合房源')
-                          break # 既然数据是准的，就不用重试了
+                          break
 
                   except Exception as e:
                       print(f'      ❌ 错误: {e} (尝试 {attempt+1})')
@@ -241,4 +235,5 @@ jobs:
               print('\n🏁 监控结束')
           EOF
           
-          python monitor.py
+          # 2. 运行脚本 (加上 -u 参数确保日志实时显示，不卡顿)
+          python -u monitor.py
