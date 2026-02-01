@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (v18.1 实时日志版)
+name: 东横Inn 监控 (v19.0 透明调试版)
 
 on:
   schedule:
@@ -24,7 +24,6 @@ jobs:
 
       - name: 生成并运行脚本
         run: |
-          # 1. 写入 Python 脚本文件 (彻底解决引号报错)
           cat << 'EOF' > monitor.py
           import requests
           from bs4 import BeautifulSoup
@@ -61,9 +60,9 @@ jobs:
               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
               'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
               'Referer': 'https://www.toyoko-inn.com/china_cn/',
+              'Connection': 'keep-alive',
           }
 
-          # 读取 URL
           urls = []
           try:
               with open('urls.txt', 'r') as f:
@@ -75,7 +74,7 @@ jobs:
               print('❌ 找不到 urls.txt')
               exit(1)
 
-          print(f'\n📋 启动监控: {len(urls)} 个任务 (v18.1 实时日志版)\n')
+          print(f'\n📋 启动监控: {len(urls)} 个任务 (v19.0 透明调试版)\n')
           
           session = requests.Session()
           session.headers.update(headers)
@@ -83,7 +82,6 @@ jobs:
           found_list = []
 
           for i, url in enumerate(urls):
-              # === 参数解析 ===
               try:
                   parsed = urlparse(url)
                   params = parse_qs(parsed.query)
@@ -110,7 +108,6 @@ jobs:
                   target_room = None
                   target_smoke = None
 
-              # 打印任务详情 (这里打印的内容，您在网页日志里都能看到)
               info = []
               if max_price < 999999: info.append(f'<{max_price}')
               if target_room: info.append(f'[{target_room}]')
@@ -119,35 +116,25 @@ jobs:
               
               print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {checkin_date} | {", ".join(info) or "无筛选"}')
 
-              # === 抓取与重试 (JSON 模式) ===
-              for attempt in range(3):
+              for attempt in range(2):
                   try:
                       resp = session.get(url, timeout=30)
                       
-                      # 维护检测
-                      if '__NEXT_DATA__' not in resp.text and ('系统维护' in resp.text or 'maintenance' in resp.text.lower()):
-                          print(f'      🚧 系统维护中 (尝试 {attempt+1})')
-                          time.sleep(5)
+                      # 维护/JSON检测
+                      if '__NEXT_DATA__' not in resp.text:
+                          print(f'      ⚠️ 无 JSON 数据 (可能被拦截)')
                           continue
 
                       soup = BeautifulSoup(resp.text, 'html.parser')
                       script = soup.find('script', id='__NEXT_DATA__')
-                      
-                      if not script:
-                          print(f'      ⚠️ 无 JSON 数据 (尝试 {attempt+1})')
-                          time.sleep(5)
-                          continue
-                          
                       data = json.loads(script.string)
                       page_props = data.get('props', {}).get('pageProps', {})
                       room_plan_list = page_props.get('roomPlanList', [])
                       if room_plan_list is None: room_plan_list = []
 
-                      # 获取酒店名
-                      hotel_name = f'酒店{hotel_id}'
-                      try: hotel_name = page_props['hotel']['hotelName']
-                      except: pass
-
+                      # === 🔥 DEBUG 核心：打印我看到了什么 ===
+                      print(f'      🔎 JSON 解析成功，共找到 {len(room_plan_list)} 个套餐')
+                      
                       valid_rooms = []
                       
                       for plan in room_plan_list:
@@ -164,26 +151,48 @@ jobs:
                               price_obj = room.get('price', {})
                               price = price_obj.get('generalPrice', 999999)
                               
-                              # 筛选
-                              if stock <= 0: continue 
-                              if price > max_price: continue
-                              if target_room and target_room not in r_name: continue
-                              if target_smoke is not None and target_smoke != is_smoking: continue
-
+                              # 构建调试信息
                               smoke_str = '吸烟' if is_smoking else '禁烟'
-                              valid_rooms.append({
-                                  'name': r_name,
-                                  'smoke': smoke_str,
-                                  'price': price,
-                                  'stock': stock,
-                                  'plan': plan.get('planName', '标准')
-                              })
+                              room_desc = f"【{r_name}】{smoke_str} 剩{stock}间 ¥{price}"
+                              
+                              # --- 逐步检查筛选条件，并打印被谁过滤了 ---
+                              reject_reason = None
+                              
+                              if stock <= 0: 
+                                  reject_reason = "❌ 无库存"
+                              elif price > max_price: 
+                                  reject_reason = f"❌ 太贵 (>{max_price})"
+                              elif target_room and target_room not in r_name: 
+                                  reject_reason = f"❌ 房型不符 (搜[{target_room}])"
+                              elif target_smoke is not None and target_smoke != is_smoking: 
+                                  target_str = '吸烟' if target_smoke else '禁烟'
+                                  reject_reason = f"❌ 烟味不符 (搜[{target_str}])"
+                              
+                              if reject_reason:
+                                  # 只有当这是目标房型但因其他原因失败时，才打印详细日志，避免刷屏
+                                  if target_room and target_room in r_name:
+                                       print(f'      {room_desc} -> {reject_reason}')
+                                  # 如果完全没指定房型，那就打印所有有库存的
+                                  elif stock > 0 and not target_room:
+                                       print(f'      {room_desc} -> {reject_reason}')
+                              else:
+                                  print(f'      ✅ 匹配成功! {room_desc}')
+                                  valid_rooms.append({
+                                      'name': r_name,
+                                      'smoke': smoke_str,
+                                      'price': price,
+                                      'stock': stock,
+                                      'plan': plan.get('planName', '标准')
+                                  })
 
                       if valid_rooms:
                           best = min(valid_rooms, key=lambda x: x['price'])
-                          # 这里打印的 "🎉 发现!" 也会直接显示
-                          print(f"      🎉 发现! {best['name']}({best['smoke']}) ¥{best['price']}")
+                          print(f"      🎉 最终锁定: {best['name']}({best['smoke']}) ¥{best['price']}")
                           
+                          hotel_name = f'酒店{hotel_id}'
+                          try: hotel_name = page_props['hotel']['hotelName']
+                          except: pass
+
                           found_list.append({
                               'name': hotel_name,
                               'date': checkin_date,
@@ -195,17 +204,16 @@ jobs:
                           })
                           break 
                       else:
-                          print('      😴 无符合房源')
+                          print('      😴 扫描完毕，无有效目标')
                           break
 
                   except Exception as e:
-                      print(f'      ❌ 错误: {e} (尝试 {attempt+1})')
-                      time.sleep(5)
+                      print(f'      ❌ 错误: {e}')
+                      time.sleep(2)
               
               print('-'*40)
               time.sleep(2)
 
-          # === 发送邮件 ===
           if found_list:
               print(f'\n📧 发送邮件 ({len(found_list)}个目标)...')
               if user_email and resend.api_key:
@@ -235,5 +243,4 @@ jobs:
               print('\n🏁 监控结束')
           EOF
           
-          # 2. 运行脚本 (加上 -u 参数确保日志实时显示，不卡顿)
           python -u monitor.py
