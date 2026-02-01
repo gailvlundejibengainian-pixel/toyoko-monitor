@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (v13.0 时间管理大师版)
+name: 东横Inn 监控 (v13.1 修复语法报错版)
 
 on:
   schedule:
@@ -40,7 +40,6 @@ jobs:
 
           # === 0. 时间控制器逻辑 ===
           def check_is_run_time():
-              # 默认设置为北京时间 (UTC+8)
               tz_beijing = timezone(timedelta(hours=8))
               now = datetime.now(tz_beijing)
               current_hour = now.hour
@@ -50,22 +49,16 @@ jobs:
               try:
                   with open('run_time.txt', 'r') as f:
                       content = f.read().strip()
-                      # 格式预期: 08-23 (代表 08:00 到 23:59 运行)
                       if '-' in content:
                           start_str, end_str = content.split('-')
                           start_h = int(start_str)
                           end_h = int(end_str)
                           
-                          # 逻辑: 包含起始，包含结束
-                          # 比如 08-22: 8点跑...22点跑，23点停
                           is_running = False
-                          
                           if start_h <= end_h:
-                              # 白天模式 (例如 08-23)
                               if start_h <= current_hour <= end_h:
                                   is_running = True
                           else:
-                              # 跨夜模式 (例如 22-06，晚上10点到次日6点)
                               if current_hour >= start_h or current_hour <= end_h:
                                   is_running = True
                                   
@@ -85,12 +78,9 @@ jobs:
               
               return True
 
-          # 如果不在运行时间，直接退出
           if not check_is_run_time():
               exit(0)
 
-          # === 以下是 v12.0 的核心逻辑 ===
-          
           # === 配置区 ===
           resend.api_key = os.environ.get('RESEND_API_KEY')
           user_email = os.environ.get('USER_EMAIL', '').strip()
@@ -106,7 +96,7 @@ jobs:
               print('❌ 错误：找不到 urls.txt')
               exit(1)
 
-          print(f'\n📋 启动监控: {len(urls)} 个任务 (v13.0 时间管理版)\n')
+          print(f'\n📋 启动监控: {len(urls)} 个任务 (v13.1 修复引号冲突)\n')
           
           found_list = []
 
@@ -210,7 +200,11 @@ jobs:
 
                   if valid_rooms:
                       best = min(valid_rooms, key=lambda x: x['price'])
-                      print(f'      🎉 发现! {best['name']}({best['smoke']}) ¥{best['price']}')
+                      # 修复点：先把变量取出来，防止 f-string 引号打架
+                      b_name = best['name']
+                      b_smoke = best['smoke']
+                      b_price = best['price']
+                      print(f'      🎉 发现! {b_name}({b_smoke}) ¥{b_price}')
                       
                       found_list.append({
                           'id': hotel_id,
@@ -239,26 +233,43 @@ jobs:
               else:
                   try:
                       first = found_list[0]
-                      subject_txt = f'【有房】{first["name"]} {first["date"]} {first["room"]}'
+                      # 修复点：提取变量
+                      f_name = first['name']
+                      f_date = first['date']
+                      f_room = first['room']
+                      subject_txt = f'【有房】{f_name} {f_date} {f_room}'
                       
                       html = '<h3>🎉 发现符合筛选条件的空房：</h3>'
                       for item in found_list:
-                          html += f'<hr><h4>🏨 {item["name"]} ({item["date"]})</h4>'
-                          html += f'<p><strong>最低价:</strong> <span style="color:red">¥{item["price"]}</span></p>'
-                          html += f'<p><a href="{item["url"]}">👉 点击立即预订</a></p>'
+                          # 修复点：提取变量
+                          i_name = item['name']
+                          i_date = item['date']
+                          i_price = item['price']
+                          i_url = item['url']
+                          
+                          html += f'<hr><h4>🏨 {i_name} ({i_date})</h4>'
+                          html += f'<p><strong>最低价:</strong> <span style="color:red">¥{i_price}</span></p>'
+                          html += f'<p><a href=\"{i_url}\">👉 点击立即预订</a></p>'
                           html += '<ul>'
                           deduplicated = {}
-                          for d in item["details"]:
-                              key = f'{d["name"]}-{d["smoke"]}-{d["price"]}'
+                          for d in item['details']:
+                              # 修复点：提取变量，避免引号嵌套
+                              d_name = d['name']
+                              d_smoke = d['smoke']
+                              d_price = d['price']
+                              d_stock = d['stock']
+                              
+                              key = f'{d_name}-{d_smoke}-{d_price}'
                               if key not in deduplicated:
                                   deduplicated[key] = d
-                                  html += f'<li>{d["name"]} ({d["smoke"]}): <strong>¥{d["price"]}</strong> (剩{d["stock"]}间)</li>'
+                                  html += f'<li>{d_name} ({d_smoke}): <strong>¥{d_price}</strong> (剩{d_stock}间)</li>'
                           html += '</ul>'
                   
                       resend.Emails.send({'from': 'onboarding@resend.dev', 'to': user_email, 'subject': subject_txt, 'html': html})
                       print('✅ 邮件发送成功！')
                   except Exception as e:
                       print(f'❌ 邮件发送失败: {e}')
+                      traceback.print_exc()
           else:
               print('\n🏁 监控结束。')
           "
