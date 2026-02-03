@@ -2,7 +2,7 @@ name: 东横Inn 监控 (v24.0 表格修复版)
 
 on:
   schedule:
-    - cron: '*/55 * * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
   push:
     branches: [ main ]
