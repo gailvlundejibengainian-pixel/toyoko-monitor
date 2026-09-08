@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (v24.0 表格修复版)
+name: 东横Inn 监控 (v25.0 多频次控制版)
 
 on:
   schedule:
@@ -39,9 +39,10 @@ jobs:
           from datetime import datetime, timedelta, timezone
 
           # === 1. 时间控制器 ===
+          tz_beijing = timezone(timedelta(hours=8))
+          now = datetime.now(tz_beijing)
+
           try:
-              tz_beijing = timezone(timedelta(hours=8))
-              now = datetime.now(tz_beijing)
               if os.path.exists('run_time.txt'):
                   with open('run_time.txt', 'r') as f:
                       content = f.read().strip()
@@ -54,11 +55,10 @@ jobs:
                               exit(0)
           except: pass
 
-          # === 2. 基础配置 ===
+          # === 2. 基础配置与多频次过滤 ===
           resend.api_key = os.environ.get('RESEND_API_KEY')
           user_email = os.environ.get('USER_EMAIL', '').strip()
           
-          # 强力浏览器伪装
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -67,18 +67,39 @@ jobs:
               'Connection': 'keep-alive',
           }
 
+          # 判断 30 分钟轮询窗口：00~14分、30~44分区间执行；15~29分、45~59分区间跳过
+          is_30m_slot = (now.minute % 30) < 15
+
           urls = []
+          skipped_count = 0
           try:
-              with open('urls.txt', 'r') as f:
+              with open('urls.txt', 'r', encoding='utf-8') as f:
                   for line in f:
                       line = line.strip()
-                      if line and not line.startswith('#'):
-                          urls.append(line)
-          except:
-              print('❌ 找不到 urls.txt')
+                      if not line or line.startswith('#'):
+                          continue
+                      
+                      freq = 15
+                      url_str = line
+                      if '|' in line:
+                          parts = line.split('|', 1)
+                          url_str = parts[0].strip()
+                          try:
+                              freq = int(parts[1].strip())
+                          except:
+                              freq = 15
+                      
+                      # 如果是 30 分钟频次，且当前不在 30 分钟时间槽，则自动跳过
+                      if freq == 30 and not is_30m_slot:
+                          skipped_count += 1
+                          continue
+                      
+                      urls.append(url_str)
+          except Exception as e:
+              print(f'❌ 找不到或无法读取 urls.txt: {e}')
               exit(1)
 
-          print(f'\n📋 启动监控: {len(urls)} 个任务 (v24.0 表格修复版)\n')
+          print(f'\n📋 启动监控: 本次扫描 {len(urls)} 个任务 (已自动跳过 {skipped_count} 个 30分频 任务) [v25.0]\n')
           
           session = requests.Session()
           session.headers.update(headers)
@@ -118,18 +139,17 @@ jobs:
 
               detailed_rooms = [] 
               text_prices = []
-              final_hotel_name = f"酒店{hotel_id}" # 默认名字
+              final_hotel_name = f"酒店{hotel_id}"
 
               try:
                   resp = session.get(url, timeout=30)
                   soup = BeautifulSoup(resp.text, 'html.parser')
                   
-                  # === 🔥 优先抓取酒店名字 (无论JSON是否成功) ===
+                  # === 🔥 优先抓取酒店名字 ===
                   try:
                       h1 = soup.find('h1')
                       if h1:
                           raw_name = h1.get_text(strip=True)
-                          # 去除可能的干扰词
                           final_hotel_name = raw_name.replace('选择套餐', '').replace('东横INN', '').strip()
                           final_hotel_name = f"东横INN {final_hotel_name}"
                   except: pass
@@ -143,7 +163,6 @@ jobs:
                           room_plan_list = data.get('props', {}).get('pageProps', {}).get('roomPlanList', [])
                           if room_plan_list is None: room_plan_list = []
                           
-                          # 如果JSON里有名字，用JSON的（更准）
                           try:
                               hn = data.get('props', {}).get('pageProps', {}).get('hotel', {}).get('hotelName', '')
                               if hn: final_hotel_name = hn
@@ -181,22 +200,18 @@ jobs:
                           print(f'      ⚠️ JSON 解析微小错误: {e}')
 
                   # === 引擎 B: 文本扫描 (兜底) ===
-                  # 只有当详细列表为空时，才启用文本扫描，把所有看到的价格都抓下来
                   if not detailed_rooms:
-                      # 粗暴去噪
                       for t in soup(['script', 'style', 'header', 'footer']): t.decompose()
                       clean_text = soup.get_text()
                       
-                      # 找所有价格
                       raw_prices = re.findall(r'¥\s*([0-9,]+)', clean_text)
                       for p in raw_prices:
                           try:
                               v = int(p.replace(',', ''))
-                              # 排除干扰项
                               if v > 4000 and v != 10000 and v <= max_price: 
                                   text_prices.append(v)
                           except: pass
-                      text_prices = sorted(list(set(text_prices))) # 去重排序
+                      text_prices = sorted(list(set(text_prices)))
 
                   # === 决策时刻 ===
                   final_item = None
@@ -222,7 +237,7 @@ jobs:
                           'url': url,
                           'price': min_p,
                           'details': [],
-                          'text_prices': text_prices, # 传给邮件
+                          'text_prices': text_prices,
                           'type': 'text'
                       }
                   else:
@@ -254,7 +269,6 @@ jobs:
                           body += f"<p><a href='{item['url']}'>👉 点击立即预订</a></p>"
                           
                           if item['type'] == 'json' and item['details']:
-                              # 表格模式
                               body += "<table border='1' cellpadding='5' style='border-collapse:collapse; width:100%;'>"
                               body += "<tr style='background:#f0f0f0'><th>房型</th><th>吸烟</th><th>价格</th><th>库存</th></tr>"
                               
@@ -267,7 +281,6 @@ jobs:
                               body += "</table>"
                           
                           elif item['type'] == 'text' and 'text_prices' in item:
-                              # 文本列表模式
                               body += "<p><strong>⚠️ 未能读取详细房型 (可能需登录)，但检测到以下价格：</strong></p>"
                               body += "<ul>"
                               for p in item['text_prices']:
