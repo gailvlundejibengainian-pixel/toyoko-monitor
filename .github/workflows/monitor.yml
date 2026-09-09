@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (v25.0 多频次控制版)
+name: 东横Inn 监控 (v26.0 高优先红色提醒版)
 
 on:
   schedule:
@@ -94,12 +94,12 @@ jobs:
                           skipped_count += 1
                           continue
                       
-                      urls.append(url_str)
+                      urls.append({'url': url_str, 'freq': freq})
           except Exception as e:
               print(f'❌ 找不到或无法读取 urls.txt: {e}')
               exit(1)
 
-          print(f'\n📋 启动监控: 本次扫描 {len(urls)} 个任务 (已自动跳过 {skipped_count} 个 30分频 任务) [v25.0]\n')
+          print(f'\n📋 启动监控: 本次扫描 {len(urls)} 个任务 (已自动跳过 {skipped_count} 个 30分频 任务) [v26.0]\n')
           
           session = requests.Session()
           session.headers.update(headers)
@@ -110,7 +110,9 @@ jobs:
 
           found_list = []
 
-          for i, url in enumerate(urls):
+          for i, item_info in enumerate(urls):
+              url = item_info['url']
+              freq = item_info['freq']
               try:
                   parsed = urlparse(url)
                   params = parse_qs(parsed.query)
@@ -135,7 +137,7 @@ jobs:
                   max_price = 999999
                   target_room, target_smoke = None, None
 
-              print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {checkin_date}')
+              print(f'[{i+1}/{len(urls)}] 🏨 {hotel_id} | 📅 {checkin_date} ({freq}分频)')
 
               detailed_rooms = [] 
               text_prices = []
@@ -225,7 +227,8 @@ jobs:
                           'url': url,
                           'price': best['price'],
                           'details': detailed_rooms,
-                          'type': 'json'
+                          'type': 'json',
+                          'freq': freq
                       }
                       
                   elif text_prices:
@@ -238,7 +241,8 @@ jobs:
                           'price': min_p,
                           'details': [],
                           'text_prices': text_prices,
-                          'type': 'text'
+                          'type': 'text',
+                          'freq': freq
                       }
                   else:
                       print('      😴 暂无符合条件的空房')
@@ -258,14 +262,24 @@ jobs:
               print(f'\n📧 发送邮件 ({len(found_list)}个目标)...')
               if user_email and resend.api_key:
                   try:
+                      # 检查是否有 15 分钟频次的高优先级房源
+                      has_high_priority = any(item.get('freq', 15) == 15 for item in found_list)
                       first = found_list[0]
-                      subj = f"【有房】{first['name']} {first['date']} ¥{first['price']}"
                       
-                      body = "<h3>🎉 发现空房清单：</h3>"
+                      # iOS 预览优化：标题和正文最前面加上鲜艳红色警报符号
+                      if has_high_priority:
+                          subj = f"🔴🔴🔴【紧急有房】{first['name']} {first['date']} ¥{first['price']}"
+                          body = "<h2 style='color:red;'>🚨🚨🚨 优先高频目标有房！请立即抢房：</h2>"
+                      else:
+                          subj = f"【有房】{first['name']} {first['date']} ¥{first['price']}"
+                          body = "<h3>🎉 发现空房清单：</h3>"
                       
                       for item in found_list:
                           body += f"<hr>"
-                          body += f"<h4>🏨 {item['name']} ({item['date']})</h4>"
+                          
+                          # 给 15 分钟任务加红色高亮角标
+                          freq_tag = "<b style='color:red;'>[🚨 15分急抢]</b> " if item.get('freq') == 15 else ""
+                          body += f"<h4>{freq_tag}🏨 {item['name']} ({item['date']})</h4>"
                           body += f"<p><a href='{item['url']}'>👉 点击立即预订</a></p>"
                           
                           if item['type'] == 'json' and item['details']:
