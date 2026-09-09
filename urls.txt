@@ -43,7 +43,9 @@ https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00145&start=2
 https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00365&start=2026-09-29&end=2026-09-30&room=1&people=2&smoking=all&tab=roomType&sort=recommend
 https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00365&start=2026-09-30&end=2026-10-01&room=1&people=2&smoking=all&tab=roomType&sort=recommend
 https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00365&start=2026-10-01&end=2026-10-02&room=1&people=2&smoking=all&tab=roomType&sort=recommend
-
+https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00130&start=2026-09-29&end=2026-09-30&room=1&people=2&smoking=all&tab=roomType&sort=recommend
+https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00130&start=2026-09-30&end=2026-10-01&room=1&people=2&smoking=all&tab=roomType&sort=recommend
+https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00130&start=2026-10-01&end=2026-10-02&room=1&people=2&smoking=all&tab=roomType&sort=recommend
 
 # 不急：30分钟查一次（末尾加上 | 30）
 #https://www.toyoko-inn.com/china_cn/search/result/room_plan/?hotel=00365&start=2026-09-25&end=2026-09-26&room=1&people=2&smoking=all&tab=roomType&sort=recommend | 30
