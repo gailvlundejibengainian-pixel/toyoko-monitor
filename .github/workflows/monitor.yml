@@ -1,8 +1,8 @@
-name: 东横Inn 监控 (v26.0 高优先红色提醒版)
+name: 东横Inn 监控 (v27.0 10分钟极速版)
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/10 * * * *'
   workflow_dispatch:
   push:
     branches: [ main ]
@@ -67,8 +67,9 @@ jobs:
               'Connection': 'keep-alive',
           }
 
-          # 判断 30 分钟轮询窗口：00~14分、30~44分区间执行；15~29分、45~59分区间跳过
-          is_30m_slot = (now.minute % 30) < 15
+          # 10分钟基频下的 30分钟轮询窗口：
+          # 在 :00 和 :30 槽位执行 30分钟任务；在 :10, :20, :40, :50 槽位跳过
+          is_30m_slot = (now.minute % 30) < 10
 
           urls = []
           skipped_count = 0
@@ -79,7 +80,7 @@ jobs:
                       if not line or line.startswith('#'):
                           continue
                       
-                      freq = 15
+                      freq = 10
                       url_str = line
                       if '|' in line:
                           parts = line.split('|', 1)
@@ -87,9 +88,9 @@ jobs:
                           try:
                               freq = int(parts[1].strip())
                           except:
-                              freq = 15
+                              freq = 10
                       
-                      # 如果是 30 分钟频次，且当前不在 30 分钟时间槽，则自动跳过
+                      # 如果是 30 分钟频次，且当前不在 30 分钟时间槽（:00 或 :30），则自动跳过
                       if freq == 30 and not is_30m_slot:
                           skipped_count += 1
                           continue
@@ -99,7 +100,7 @@ jobs:
               print(f'❌ 找不到或无法读取 urls.txt: {e}')
               exit(1)
 
-          print(f'\n📋 启动监控: 本次扫描 {len(urls)} 个任务 (已自动跳过 {skipped_count} 个 30分频 任务) [v26.0]\n')
+          print(f'\n📋 启动监控: 本次扫描 {len(urls)} 个任务 (已自动跳过 {skipped_count} 个 30分频 任务) [v27.0 10分极速版]\n')
           
           session = requests.Session()
           session.headers.update(headers)
@@ -262,11 +263,11 @@ jobs:
               print(f'\n📧 发送邮件 ({len(found_list)}个目标)...')
               if user_email and resend.api_key:
                   try:
-                      # 检查是否有 15 分钟频次的高优先级房源
-                      has_high_priority = any(item.get('freq', 15) == 15 for item in found_list)
+                      # 检查是否有 10 分钟频次的高优先级房源 (未标记 | 30 的默认为 10 分钟)
+                      has_high_priority = any(item.get('freq', 10) == 10 for item in found_list)
                       first = found_list[0]
                       
-                      # iOS 预览优化：标题和正文最前面加上鲜艳红色警报符号
+                      # iOS 预览优化：高急迫度时在标题和正文最前面加上鲜艳红色警报符号
                       if has_high_priority:
                           subj = f"🔴🔴🔴【紧急有房】{first['name']} {first['date']} ¥{first['price']}"
                           body = "<h2 style='color:red;'>🚨🚨🚨 优先高频目标有房！请立即抢房：</h2>"
@@ -277,8 +278,8 @@ jobs:
                       for item in found_list:
                           body += f"<hr>"
                           
-                          # 给 15 分钟任务加红色高亮角标
-                          freq_tag = "<b style='color:red;'>[🚨 15分急抢]</b> " if item.get('freq') == 15 else ""
+                          # 给 10 分钟任务加红色高亮角标
+                          freq_tag = "<b style='color:red;'>[🚨 10分急抢]</b> " if item.get('freq') == 10 else ""
                           body += f"<h4>{freq_tag}🏨 {item['name']} ({item['date']})</h4>"
                           body += f"<p><a href='{item['url']}'>👉 点击立即预订</a></p>"
                           
