@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (v28.0 Bark 极速响铃版)
+name: 东横Inn 监控 (v30.0 30分钟无Bark版)
 
 on:
   schedule:
@@ -100,7 +100,7 @@ jobs:
               print(f'❌ 找不到或无法读取 urls.txt: {e}')
               exit(1)
 
-          print(f'\n📋 启动监控: 本次扫描 {len(urls)} 个任务 (已自动跳过 {skipped_count} 个 30分频 任务) [v28.0 Bark版]\n')
+          print(f'\n📋 启动监控: 本次扫描 {len(urls)} 个任务 (已自动跳过 {skipped_count} 个 30分频 任务) [v30.0 纯紧急Bark版]\n')
           
           session = requests.Session()
           session.headers.update(headers)
@@ -256,20 +256,20 @@ jobs:
           if found_list:
               print(f'\n🔔 触发通知 ({len(found_list)}个目标)...')
               
-              # --- 1. Bark App 推送 ---
+              # --- 1. Bark App 推送 (仅限 10 分钟高优先级目标) ---
               if bark_key:
-                  print('📱 正在发送 Bark 手机通知...')
+                  print('📱 正在检查 Bark 手机通知...')
                   for item in found_list:
                       is_urgent = (item.get('freq', 10) == 10)
                       
-                      if is_urgent:
-                          b_title = f"🔴🔴🔴【紧急有房】{item['name']}"
-                          sound_name = "alarm.caf"        # 强响铃警报声
-                          level_type = "timeSensitive"    # 时效性高优先通知
-                      else:
-                          b_title = f"【有房通知】{item['name']}"
-                          sound_name = "none"             # 彻底静音，不打扰
-                          level_type = "active"
+                      # 💡 30 分钟普通目标彻底跳过 Bark 推送，不触发手机任何弹窗/声音
+                      if not is_urgent:
+                          print(f"   ℹ️ 30分钟普通目标 [{item['name']}]，跳过 Bark 手机通知。")
+                          continue
+                          
+                      b_title = f"🔴🔴🔴【紧急有房】{item['name']}"
+                      sound_name = "alarm.caf"        # 强响铃警报声
+                      level_type = "timeSensitive"    # 时效性高优先通知
                           
                       b_body = f"日期: {item['date']} | 最低价: ¥{item['price']}\n👉 点击直接打开预订网页"
                       
@@ -282,7 +282,6 @@ jobs:
                           "group": "东横Inn监控"
                       }
                       try:
-                          # 支持填完整URL或只填Key
                           target_bark_url = bark_key if bark_key.startswith('http') else f"https://api.day.app/{bark_key}"
                           resp_b = requests.post(target_bark_url, json=payload, timeout=10)
                           if resp_b.status_code == 200:
@@ -294,7 +293,7 @@ jobs:
               else:
                   print('ℹ️ 未设置 BARK_KEY，跳过 Bark 推送。')
 
-              # --- 2. Resend 邮件推送 (备用) ---
+              # --- 2. Resend 邮件推送 (全量留存) ---
               if user_email and resend.api_key:
                   print('📧 正在发送 Resend 备份邮件...')
                   try:
