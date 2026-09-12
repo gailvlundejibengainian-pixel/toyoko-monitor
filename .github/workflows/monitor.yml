@@ -1,4 +1,4 @@
-name: 东横Inn 监控 (v27.0 10分钟极速版)
+name: 东横Inn 监控 (v28.0 Bark 极速响铃版)
 
 on:
   schedule:
@@ -26,6 +26,7 @@ jobs:
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           USER_EMAIL: ${{ secrets.USER_EMAIL }}
+          BARK_KEY: ${{ secrets.BARK_KEY }}
         run: |
           cat << 'EOF' > monitor.py
           import requests
@@ -58,6 +59,7 @@ jobs:
           # === 2. 基础配置与多频次过滤 ===
           resend.api_key = os.environ.get('RESEND_API_KEY')
           user_email = os.environ.get('USER_EMAIL', '').strip()
+          bark_key = os.environ.get('BARK_KEY', '').strip()
           
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
@@ -67,8 +69,7 @@ jobs:
               'Connection': 'keep-alive',
           }
 
-          # 10分钟基频下的 30分钟轮询窗口：
-          # 在 :00 和 :30 槽位执行 30分钟任务；在 :10, :20, :40, :50 槽位跳过
+          # 10分钟基频下的 30分钟轮询窗口：:00 和 :30 槽位执行；其他槽位跳过 30 分钟任务
           is_30m_slot = (now.minute % 30) < 10
 
           urls = []
@@ -90,7 +91,6 @@ jobs:
                           except:
                               freq = 10
                       
-                      # 如果是 30 分钟频次，且当前不在 30 分钟时间槽（:00 或 :30），则自动跳过
                       if freq == 30 and not is_30m_slot:
                           skipped_count += 1
                           continue
@@ -100,12 +100,11 @@ jobs:
               print(f'❌ 找不到或无法读取 urls.txt: {e}')
               exit(1)
 
-          print(f'\n📋 启动监控: 本次扫描 {len(urls)} 个任务 (已自动跳过 {skipped_count} 个 30分频 任务) [v27.0 10分极速版]\n')
+          print(f'\n📋 启动监控: 本次扫描 {len(urls)} 个任务 (已自动跳过 {skipped_count} 个 30分频 任务) [v28.0 Bark版]\n')
           
           session = requests.Session()
           session.headers.update(headers)
           
-          # 预热
           try: session.get('https://www.toyoko-inn.com/china_cn/', timeout=5)
           except: pass
 
@@ -148,7 +147,6 @@ jobs:
                   resp = session.get(url, timeout=30)
                   soup = BeautifulSoup(resp.text, 'html.parser')
                   
-                  # === 🔥 优先抓取酒店名字 ===
                   try:
                       h1 = soup.find('h1')
                       if h1:
@@ -157,7 +155,7 @@ jobs:
                           final_hotel_name = f"东横INN {final_hotel_name}"
                   except: pass
 
-                  # === 引擎 A: JSON 解析 (生成表格) ===
+                  # === 引擎 A: JSON 解析 ===
                   json_success = False
                   if '__NEXT_DATA__' in resp.text:
                       try:
@@ -185,7 +183,6 @@ jobs:
                                   price_obj = room.get('price', {})
                                   price = price_obj.get('generalPrice', 999999)
                                   
-                                  # 筛选逻辑
                                   if stock <= 0: continue
                                   if price > max_price: continue
                                   if target_room and target_room not in r_name: continue
@@ -202,7 +199,7 @@ jobs:
                       except Exception as e:
                           print(f'      ⚠️ JSON 解析微小错误: {e}')
 
-                  # === 引擎 B: 文本扫描 (兜底) ===
+                  # === 引擎 B: 文本扫描 ===
                   if not detailed_rooms:
                       for t in soup(['script', 'style', 'header', 'footer']): t.decompose()
                       clean_text = soup.get_text()
@@ -216,9 +213,7 @@ jobs:
                           except: pass
                       text_prices = sorted(list(set(text_prices)))
 
-                  # === 决策时刻 ===
                   final_item = None
-                  
                   if detailed_rooms:
                       best = min(detailed_rooms, key=lambda x: x['price'])
                       print(f'      🎉 列表模式: 发现 {len(detailed_rooms)} 个房型! 最低: {best["name"]} ¥{best["price"]}')
@@ -231,7 +226,6 @@ jobs:
                           'type': 'json',
                           'freq': freq
                       }
-                      
                   elif text_prices:
                       min_p = min(text_prices)
                       print(f'      🎉 文本模式: 发现价格 {text_prices}')
@@ -258,16 +252,55 @@ jobs:
 
               print('-'*40)
 
-          # === 发送邮件 ===
+          # === 消息推送中心 ===
           if found_list:
-              print(f'\n📧 发送邮件 ({len(found_list)}个目标)...')
+              print(f'\n🔔 触发通知 ({len(found_list)}个目标)...')
+              
+              # --- 1. Bark App 推送 ---
+              if bark_key:
+                  print('📱 正在发送 Bark 手机通知...')
+                  for item in found_list:
+                      is_urgent = (item.get('freq', 10) == 10)
+                      
+                      if is_urgent:
+                          b_title = f"🔴🔴🔴【紧急有房】{item['name']}"
+                          sound_name = "alarm.caf"        # 强响铃警报声
+                          level_type = "timeSensitive"    # 时效性高优先通知
+                      else:
+                          b_title = f"【有房通知】{item['name']}"
+                          sound_name = "none"             # 彻底静音，不打扰
+                          level_type = "active"
+                          
+                      b_body = f"日期: {item['date']} | 最低价: ¥{item['price']}\n👉 点击直接打开预订网页"
+                      
+                      payload = {
+                          "title": b_title,
+                          "body": b_body,
+                          "url": item['url'],
+                          "sound": sound_name,
+                          "level": level_type,
+                          "group": "东横Inn监控"
+                      }
+                      try:
+                          # 支持填完整URL或只填Key
+                          target_bark_url = bark_key if bark_key.startswith('http') else f"https://api.day.app/{bark_key}"
+                          resp_b = requests.post(target_bark_url, json=payload, timeout=10)
+                          if resp_b.status_code == 200:
+                              print(f"   ✅ Bark [{b_title}] 发送成功！")
+                          else:
+                              print(f"   ⚠️ Bark 发送返回异常: {resp_b.text}")
+                      except Exception as eb:
+                          print(f"   ❌ Bark 推送失败: {eb}")
+              else:
+                  print('ℹ️ 未设置 BARK_KEY，跳过 Bark 推送。')
+
+              # --- 2. Resend 邮件推送 (备用) ---
               if user_email and resend.api_key:
+                  print('📧 正在发送 Resend 备份邮件...')
                   try:
-                      # 检查是否有 10 分钟频次的高优先级房源 (未标记 | 30 的默认为 10 分钟)
                       has_high_priority = any(item.get('freq', 10) == 10 for item in found_list)
                       first = found_list[0]
                       
-                      # iOS 预览优化：高急迫度时在标题和正文最前面加上鲜艳红色警报符号
                       if has_high_priority:
                           subj = f"🔴🔴🔴【紧急有房】{first['name']} {first['date']} ¥{first['price']}"
                           body = "<h2 style='color:red;'>🚨🚨🚨 优先高频目标有房！请立即抢房：</h2>"
@@ -277,8 +310,6 @@ jobs:
                       
                       for item in found_list:
                           body += f"<hr>"
-                          
-                          # 给 10 分钟任务加红色高亮角标
                           freq_tag = "<b style='color:red;'>[🚨 10分急抢]</b> " if item.get('freq') == 10 else ""
                           body += f"<h4>{freq_tag}🏨 {item['name']} ({item['date']})</h4>"
                           body += f"<p><a href='{item['url']}'>👉 点击立即预订</a></p>"
@@ -286,7 +317,6 @@ jobs:
                           if item['type'] == 'json' and item['details']:
                               body += "<table border='1' cellpadding='5' style='border-collapse:collapse; width:100%;'>"
                               body += "<tr style='background:#f0f0f0'><th>房型</th><th>吸烟</th><th>价格</th><th>库存</th></tr>"
-                              
                               seen = set()
                               for d in item['details']:
                                   key = f"{d['name']}-{d['smoke']}-{d['price']}"
@@ -294,20 +324,17 @@ jobs:
                                       seen.add(key)
                                       body += f"<tr><td>{d['name']}</td><td>{d['smoke']}</td><td style='color:red;font-weight:bold;'>¥{d['price']}</td><td>剩{d['stock']}间</td></tr>"
                               body += "</table>"
-                          
                           elif item['type'] == 'text' and 'text_prices' in item:
-                              body += "<p><strong>⚠️ 未能读取详细房型 (可能需登录)，但检测到以下价格：</strong></p>"
+                              body += "<p><strong>⚠️ 未能读取详细房型，但检测到以下价格：</strong></p>"
                               body += "<ul>"
                               for p in item['text_prices']:
                                    body += f"<li><span style='color:red;font-weight:bold;'>¥{p}</span></li>"
                               body += "</ul>"
                       
                       resend.Emails.send({'from': 'onboarding@resend.dev', 'to': user_email, 'subject': subj, 'html': body})
-                      print('✅ 邮件发送成功！')
+                      print('   ✅ 邮件发送成功！')
                   except Exception as e:
-                      print(f'❌ 邮件发送失败: {e}')
-              else:
-                  print('❌ 邮箱未配置')
+                      print(f'   ❌ 邮件发送失败: {e}')
           else:
               print('\n🏁 监控结束，无符合条件房源。')
           EOF
