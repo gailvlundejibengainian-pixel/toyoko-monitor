@@ -39,9 +39,6 @@ jobs:
           import re
           from datetime import datetime, timedelta, timezone
 
-          # === 博爱房过滤关键词（全局共用） ===
-          EXCLUDE_KEYWORDS = ['博愛', '博爱', 'ハートフル', 'Heartful', 'バリアフリー', 'barrier free', '无障碍']
-
           # === 1. 时间控制器 ===
           tz_beijing = timezone(timedelta(hours=8))
           now = datetime.now(tz_beijing)
@@ -176,12 +173,6 @@ jobs:
                               room_types = plan.get('roomTypes', [])
                               for room in room_types:
                                   r_name = room.get('roomTypeName', '')
-                                  
-                                  # === 博爱房过滤：命中任一关键词直接跳过 ===
-                                  if any(kw.lower() in r_name.lower() for kw in EXCLUDE_KEYWORDS):
-                                      print(f'      🚫 跳过博爱房: {r_name}')
-                                      continue
-                                  
                                   specs = room.get('specs', {})
                                   is_smoking = specs.get('isSmoking', False)
                                   
@@ -213,19 +204,14 @@ jobs:
                       for t in soup(['script', 'style', 'header', 'footer']): t.decompose()
                       clean_text = soup.get_text()
                       
-                      # === 博爱房过滤：页面出现博爱房关键词则放弃文本扫描，避免误报 ===
-                      has_excluded = any(kw.lower() in clean_text.lower() for kw in EXCLUDE_KEYWORDS)
-                      if has_excluded:
-                          print('      🚫 页面含博爱房关键词，文本扫描结果作废，避免误报')
-                      else:
-                          raw_prices = re.findall(r'¥\s*([0-9,]+)', clean_text)
-                          for p in raw_prices:
-                              try:
-                                  v = int(p.replace(',', ''))
-                                  if v > 4000 and v != 10000 and v <= max_price: 
-                                      text_prices.append(v)
-                              except: pass
-                          text_prices = sorted(list(set(text_prices)))
+                      raw_prices = re.findall(r'¥\s*([0-9,]+)', clean_text)
+                      for p in raw_prices:
+                          try:
+                              v = int(p.replace(',', ''))
+                              if v > 4000 and v != 10000 and v <= max_price: 
+                                  text_prices.append(v)
+                          except: pass
+                      text_prices = sorted(list(set(text_prices)))
 
                   final_item = None
                   if detailed_rooms:
